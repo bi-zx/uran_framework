@@ -1,0 +1,7 @@
+routes:
+  state_snapshot: /uran/runtime/state_snapshot
+  heartbeat: /uran/runtime/heartbeat
+  state_write: /uran/runtime/state_write
+  state_report: /uran/runtime/state_report
+  uplink: /uran/runtime/uplink
+  downlink: /uran/runtime/downlink
