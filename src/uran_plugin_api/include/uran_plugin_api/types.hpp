@@ -65,9 +65,29 @@ struct PluginCapabilities
   std::vector<std::string> provided_state_fields;
 };
 
+/** @brief 插件运行实例在设备模型中的身份。 */
+struct PluginIdentity
+{
+  std::string instance_id;
+  std::string device_id;
+  std::string component_id;
+};
+
+inline bool operator==(const PluginIdentity & left, const PluginIdentity & right) noexcept
+{
+  return left.instance_id == right.instance_id &&
+         left.device_id == right.device_id &&
+         left.component_id == right.component_id;
+}
+
+inline bool operator!=(const PluginIdentity & left, const PluginIdentity & right) noexcept
+{
+  return !(left == right);
+}
+
+/** @brief 插件实现类的静态描述，不包含任何部署实例身份。 */
 struct PluginDescriptor
 {
-  std::string plugin_id;
   std::string plugin_type;
   std::string plugin_version;
   std::string api_version;
@@ -76,7 +96,9 @@ struct PluginDescriptor
 
 struct PluginSpec
 {
+  PluginIdentity identity;
   PluginDescriptor descriptor;
+  std::string ros_namespace;
   bool enabled{true};
   int priority{0};
   std::string config_file;
@@ -101,6 +123,7 @@ struct StateValue
 
 struct PluginRuntimeInfo
 {
+  PluginIdentity identity;
   PluginDescriptor descriptor;
   PluginState state{PluginState::unloaded};
   PluginHealth health;

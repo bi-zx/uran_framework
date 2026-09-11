@@ -9,6 +9,7 @@ namespace uran_core_framework
 using uran_plugin_api::PluginCapabilities;
 using uran_plugin_api::PluginDescriptor;
 using uran_plugin_api::PluginHealth;
+using uran_plugin_api::PluginIdentity;
 using uran_plugin_api::PluginRuntimeInfo;
 using uran_plugin_api::PluginSpec;
 using uran_plugin_api::PluginState;

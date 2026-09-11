@@ -13,14 +13,14 @@ namespace uran_core_framework
 class FakeProtocol final : public uran_plugin_api::ProtocolPlugin
 {
 public:
-  FakeProtocol(std::string id, const bool publish_success)
-  : id_(std::move(id)), publish_success_(publish_success)
+  explicit FakeProtocol(const bool publish_success)
+  : publish_success_(publish_success)
   {
   }
 
   uran_plugin_api::PluginDescriptor descriptor() const override
   {
-    return {id_, "protocol", "0.1.0", "1.0", "test/FakeProtocol"};
+    return {"protocol", "0.1.0", "1.0", "test/FakeProtocol"};
   }
 
   uran_plugin_api::Status configure(
@@ -87,7 +87,6 @@ public:
   }
 
 private:
-  std::string id_;
   bool publish_success_{false};
   std::size_t publish_count_{0U};
   uran_plugin_api::DownlinkCallback callback_;
@@ -96,12 +95,14 @@ private:
 TEST(ProtocolGateway, FallsBackWhenPreferredProtocolFails)
 {
   auto gateway = std::make_shared<ProtocolGateway>();
-  auto failed = std::make_shared<FakeProtocol>("failed", false);
-  auto working = std::make_shared<FakeProtocol>("working", true);
+  auto failed = std::make_shared<FakeProtocol>(false);
+  auto working = std::make_shared<FakeProtocol>(true);
 
-  ASSERT_TRUE(gateway->register_protocol("failed", failed).ok);
-  ASSERT_TRUE(gateway->register_protocol("working", working).ok);
-  ASSERT_TRUE(gateway->set_primary("working").ok);
+  ASSERT_TRUE(gateway->register_protocol(
+      {"failed", "robot_001", "communication"}, failed, 10).ok);
+  ASSERT_TRUE(gateway->register_protocol(
+      {"working", "robot_001", "communication"}, working, 100).ok);
+  ASSERT_TRUE(gateway->set_primary_instance("working").ok);
 
   const auto result = gateway->publish(
     uran_plugin_api::UplinkEnvelope{"event", "{}", "request-1", false},
@@ -115,28 +116,56 @@ TEST(ProtocolGateway, FallsBackWhenPreferredProtocolFails)
 TEST(ProtocolGateway, DeliversProtocolDownlinkToRuntimeHandler)
 {
   auto gateway = std::make_shared<ProtocolGateway>();
-  auto protocol = std::make_shared<FakeProtocol>("loopback", true);
+  auto protocol = std::make_shared<FakeProtocol>(true);
   std::string received;
+  std::string source_instance;
   gateway->set_downlink_handler(
-    [&received](const uran_plugin_api::DownlinkEnvelope & message) {
+    [&received, &source_instance](
+      const PluginIdentity & identity,
+      const uran_plugin_api::DownlinkEnvelope & message)
+    {
       received = message.payload;
+      source_instance = identity.instance_id;
     });
 
-  ASSERT_TRUE(gateway->register_protocol("loopback", protocol).ok);
+  ASSERT_TRUE(gateway->register_protocol(
+      {"loopback", "robot_001", "communication"}, protocol).ok);
   ASSERT_TRUE(gateway->publish(
       uran_plugin_api::UplinkEnvelope{"event", "payload", "", false}).ok);
   EXPECT_EQ(received, "payload");
+  EXPECT_EQ(source_instance, "loopback");
 }
 
 TEST(ProtocolGateway, RejectsMessageWithoutType)
 {
   auto gateway = std::make_shared<ProtocolGateway>();
-  auto protocol = std::make_shared<FakeProtocol>("loopback", true);
+  auto protocol = std::make_shared<FakeProtocol>(true);
 
-  ASSERT_TRUE(gateway->register_protocol("loopback", protocol).ok);
+  ASSERT_TRUE(gateway->register_protocol(
+      {"loopback", "robot_001", "communication"}, protocol).ok);
   EXPECT_FALSE(gateway->publish(
       uran_plugin_api::UplinkEnvelope{"", "payload", "", false}).ok);
   EXPECT_EQ(protocol->publish_count(), 0U);
+}
+
+TEST(ProtocolGateway, TreatsSameImplementationAsIndependentInstances)
+{
+  auto gateway = std::make_shared<ProtocolGateway>();
+  auto primary = std::make_shared<FakeProtocol>(true);
+  auto backup = std::make_shared<FakeProtocol>(true);
+
+  ASSERT_TRUE(gateway->register_protocol(
+      {"protocol_primary", "robot_001", "communication"}, primary, 100).ok);
+  ASSERT_TRUE(gateway->register_protocol(
+      {"protocol_backup", "robot_001", "communication"}, backup, 50).ok);
+
+  EXPECT_EQ(gateway->protocol_instance_ids().size(), 2U);
+  EXPECT_EQ(gateway->primary_instance_id(), "protocol_primary");
+  ASSERT_TRUE(gateway->publish(
+      uran_plugin_api::UplinkEnvelope{"event", "{}", "", false},
+      "protocol_backup").ok);
+  EXPECT_EQ(primary->publish_count(), 0U);
+  EXPECT_EQ(backup->publish_count(), 1U);
 }
 
 }

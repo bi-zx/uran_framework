@@ -22,6 +22,7 @@ find_package(yaml_cpp_vendor REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
+  src/capability_registry.cpp
   src/config_manager.cpp
   src/message_router.cpp
   src/plugin_manager.cpp
@@ -106,6 +107,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_protocol_gateway test/test_protocol_gateway.cpp)
   target_link_libraries(test_protocol_gateway ${PROJECT_NAME})
+
+  ament_add_gtest(test_capability_registry test/test_capability_registry.cpp)
+  target_link_libraries(test_capability_registry ${PROJECT_NAME})
 endif()
 
 ament_package()

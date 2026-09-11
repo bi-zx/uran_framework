@@ -17,6 +17,16 @@
 namespace uran_core_framework
 {
 
+class CapabilityRegistry;
+
+struct URAN_CORE_FRAMEWORK_PUBLIC ActivePluginInstance
+{
+  PluginIdentity identity;
+  PluginDescriptor descriptor;
+  int priority{0};
+  std::shared_ptr<uran_plugin_api::Plugin> instance;
+};
+
 /**
  * @brief 负责插件发现、受控上下文注入和生命周期事务。
  *
@@ -25,7 +35,9 @@ namespace uran_core_framework
 class URAN_CORE_FRAMEWORK_PUBLIC PluginManager final
 {
 public:
-  explicit PluginManager(std::string base_package);
+  explicit PluginManager(
+    std::string base_package,
+    std::shared_ptr<CapabilityRegistry> capability_registry = nullptr);
   ~PluginManager();
 
   PluginManager(const PluginManager &) = delete;
@@ -35,18 +47,17 @@ public:
     const PluginSpec & specification,
     const uran_plugin_api::PluginContext & context,
     const YAML::Node & config);
-  Status activate(const std::string & plugin_id);
-  Status deactivate(const std::string & plugin_id);
-  Status unload(const std::string & plugin_id);
+  Status activate(const std::string & instance_id);
+  Status deactivate(const std::string & instance_id);
+  Status unload(const std::string & instance_id);
   Status configure_and_load_all(
     const YAML::Node & plugins_node,
     const uran_plugin_api::PluginContext & context);
 
   std::vector<PluginRuntimeInfo> list() const;
-  std::vector<std::shared_ptr<uran_plugin_api::Plugin>> instances() const;
   /** @brief 返回处于稳定激活状态、可以参与业务调用的插件实例。 */
-  std::vector<std::shared_ptr<uran_plugin_api::Plugin>> active_instances() const;
-  bool has(const std::string & plugin_id) const;
+  std::vector<ActivePluginInstance> active_instances() const;
+  bool has(const std::string & instance_id) const;
 
 private:
   struct Entry
@@ -60,15 +71,16 @@ private:
     std::string error;
   };
 
-  Entry * find_entry(const std::string & plugin_id);
-  const Entry * find_entry(const std::string & plugin_id) const;
-  static bool valid_plugin_id(const std::string & plugin_id);
+  Entry * find_entry(const std::string & instance_id);
+  const Entry * find_entry(const std::string & instance_id) const;
+  static bool valid_identity_segment(const std::string & value);
 
   std::string base_package_;
+  std::shared_ptr<CapabilityRegistry> capability_registry_;
   pluginlib::ClassLoader<uran_plugin_api::Plugin> loader_;
   std::mutex loader_mutex_;
   mutable std::mutex mutex_;
   std::map<std::string, Entry> entries_;
 };
 
-}s
+}

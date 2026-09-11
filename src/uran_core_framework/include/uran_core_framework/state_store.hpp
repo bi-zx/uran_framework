@@ -35,6 +35,9 @@ public:
   StateStore & operator=(const StateStore &) = delete;
 
   Status register_field(const StateFieldSpec & specification) override;
+  Status unregister_field(
+    const std::string & field_name,
+    const std::string & source) override;
   Status set(
     const std::string & field_name,
     const std::string & value_json,

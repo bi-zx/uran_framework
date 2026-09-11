@@ -6,6 +6,7 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include "uran_plugin_api/runtime_access.hpp"
+#include "uran_plugin_api/types.hpp"
 #include "uran_plugin_api/visibility_control.hpp"
 
 namespace uran_plugin_api
@@ -23,17 +24,23 @@ public:
     rclcpp::Node::SharedPtr node,
     std::shared_ptr<StateAccess> state_access,
     std::shared_ptr<RouteResolver> route_resolver,
+    PluginIdentity identity,
     std::string instance_namespace);
 
   rclcpp::Node::SharedPtr node() const noexcept;
   std::shared_ptr<StateAccess> state_access() const noexcept;
   std::shared_ptr<RouteResolver> route_resolver() const noexcept;
+  const PluginIdentity & identity() const noexcept;
+  const std::string & instance_id() const noexcept;
+  const std::string & device_id() const noexcept;
+  const std::string & component_id() const noexcept;
   const std::string & instance_namespace() const noexcept;
 
 private:
   std::weak_ptr<rclcpp::Node> node_;
   std::shared_ptr<StateAccess> state_access_;
   std::shared_ptr<RouteResolver> route_resolver_;
+  PluginIdentity identity_;
   std::string instance_namespace_;
 };
 

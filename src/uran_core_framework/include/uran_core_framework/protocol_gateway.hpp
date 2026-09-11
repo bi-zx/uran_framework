@@ -23,7 +23,8 @@ class URAN_CORE_FRAMEWORK_PUBLIC ProtocolGateway final
   : public std::enable_shared_from_this<ProtocolGateway>
 {
 public:
-  using DownlinkHandler = std::function<void(const uran_plugin_api::DownlinkEnvelope &)>;
+  using DownlinkHandler = std::function<void(
+      const PluginIdentity &, const uran_plugin_api::DownlinkEnvelope &)>;
 
   ProtocolGateway() = default;
   ~ProtocolGateway();
@@ -32,24 +33,36 @@ public:
   ProtocolGateway & operator=(const ProtocolGateway &) = delete;
 
   Status register_protocol(
-    const std::string & protocol_id,
-    std::shared_ptr<uran_plugin_api::ProtocolPlugin> protocol);
-  Status unregister_protocol(const std::string & protocol_id);
-  Status set_primary(const std::string & protocol_id);
+    const PluginIdentity & identity,
+    std::shared_ptr<uran_plugin_api::ProtocolPlugin> protocol,
+    int priority = 0);
+  Status unregister_protocol(const std::string & instance_id);
+  Status set_primary_instance(const std::string & instance_id);
   void set_downlink_handler(DownlinkHandler handler);
 
   Status publish(
     const uran_plugin_api::UplinkEnvelope & message,
-    const std::string & preferred_protocol = {});
-  std::vector<std::string> protocol_ids() const;
-  std::string primary_protocol() const;
+    const std::string & preferred_instance = {});
+  std::vector<std::string> protocol_instance_ids() const;
+  std::string primary_instance_id() const;
 
 private:
-  void dispatch_downlink(const uran_plugin_api::DownlinkEnvelope & message) const;
+  struct Entry
+  {
+    PluginIdentity identity;
+    std::shared_ptr<uran_plugin_api::ProtocolPlugin> protocol;
+    int priority{0};
+  };
+
+  void select_default_primary_locked();
+  void dispatch_downlink(
+    const PluginIdentity & identity,
+    const uran_plugin_api::DownlinkEnvelope & message) const;
 
   mutable std::mutex mutex_;
-  std::map<std::string, std::shared_ptr<uran_plugin_api::ProtocolPlugin>> protocols_;
-  std::string primary_protocol_;
+  std::map<std::string, Entry> protocols_;
+  std::string primary_instance_id_;
+  bool primary_explicit_{false};
   DownlinkHandler downlink_handler_;
 };
 

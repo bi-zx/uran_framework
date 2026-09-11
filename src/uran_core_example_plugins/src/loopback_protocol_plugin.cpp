@@ -12,7 +12,6 @@ namespace uran_core_example_plugins
 uran_plugin_api::PluginDescriptor LoopbackProtocolPlugin::descriptor() const
 {
   return uran_plugin_api::PluginDescriptor{
-    "example_loopback_protocol",
     "protocol",
     "0.1.0",
     "1.0",
@@ -46,21 +45,38 @@ uran_plugin_api::Status LoopbackProtocolPlugin::configure(
     return uran_plugin_api::Status::failure("Runtime 节点已经失效");
   }
   logger_ = node->get_logger();
+  identity_ = context.identity();
+  connected_state_field_ = "plugin." + identity_.instance_id + ".connected";
   state_access_ = context.state_access();
   const auto registered = state_access_->register_field(
     uran_plugin_api::StateFieldSpec{
-      "plugin.example_loopback_protocol.connected",
+      connected_state_field_,
       "bool",
       "",
-      descriptor().plugin_id,
+      "",
       false});
   if (!registered.ok) {
     state_access_.reset();
+    identity_ = {};
+    connected_state_field_.clear();
     ++error_count_;
     return registered;
   }
+  const auto initialized = state_access_->set(
+    connected_state_field_, "false", identity_.instance_id);
+  if (!initialized.ok) {
+    static_cast<void>(state_access_->unregister_field(
+        connected_state_field_, identity_.instance_id));
+    state_access_.reset();
+    identity_ = {};
+    connected_state_field_.clear();
+    ++error_count_;
+    return initialized;
+  }
   configured_ = true;
-  RCLCPP_INFO(logger_, "回环协议插件配置完成，通道=%s", channel_name_.c_str());
+  RCLCPP_INFO(
+    logger_, "回环协议实例配置完成，实例=%s，通道=%s",
+    identity_.instance_id.c_str(), channel_name_.c_str());
   return uran_plugin_api::Status::success();
 }
 
@@ -94,10 +110,21 @@ uran_plugin_api::Status LoopbackProtocolPlugin::cleanup()
     if (active_ || connected_) {
       return uran_plugin_api::Status::failure("清理插件前必须先停用插件");
     }
+    if (state_access_ && !connected_state_field_.empty()) {
+      const auto unregistered = state_access_->unregister_field(
+        connected_state_field_, identity_.instance_id);
+      if (!unregistered.ok) {
+        ++error_count_;
+        return unregistered;
+      }
+    }
     downlink_callback_ = nullptr;
     state_access_.reset();
+    identity_ = {};
+    connected_state_field_.clear();
     channel_name_ = "default";
     configured_ = false;
+    error_count_ = 0;
   }
   return uran_plugin_api::Status::success();
 }
@@ -126,15 +153,19 @@ uran_plugin_api::PluginHealth LoopbackProtocolPlugin::health() const
 
 uran_plugin_api::PluginCapabilities LoopbackProtocolPlugin::capabilities() const
 {
+  std::lock_guard<std::mutex> lock(mutex_);
   return uran_plugin_api::PluginCapabilities{
     {"protocol.loopback", "protocol.uplink", "protocol.downlink"},
     {},
-    {"plugin.example_loopback_protocol.connected"}};
+    connected_state_field_.empty() ? std::vector<std::string>{} :
+    std::vector<std::string>{connected_state_field_}};
 }
 
 uran_plugin_api::Status LoopbackProtocolPlugin::connect()
 {
   std::shared_ptr<uran_plugin_api::StateAccess> state_access;
+  std::string state_field;
+  std::string instance_id;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!configured_ || !active_) {
@@ -142,37 +173,43 @@ uran_plugin_api::Status LoopbackProtocolPlugin::connect()
     }
     connected_ = true;
     state_access = state_access_;
+    state_field = connected_state_field_;
+    instance_id = identity_.instance_id;
   }
   const auto updated = state_access->set(
-    "plugin.example_loopback_protocol.connected", "true", descriptor().plugin_id);
+    state_field, "true", instance_id);
   if (!updated.ok) {
     std::lock_guard<std::mutex> lock(mutex_);
     connected_ = false;
     ++error_count_;
     return updated;
   }
-  RCLCPP_INFO(logger_, "回环协议已连接");
+  RCLCPP_INFO(logger_, "回环协议实例已连接: %s", instance_id.c_str());
   return uran_plugin_api::Status::success();
 }
 
 uran_plugin_api::Status LoopbackProtocolPlugin::disconnect()
 {
   std::shared_ptr<uran_plugin_api::StateAccess> state_access;
+  std::string state_field;
+  std::string instance_id;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     connected_ = false;
     state_access = state_access_;
+    state_field = connected_state_field_;
+    instance_id = identity_.instance_id;
   }
   if (state_access) {
     const auto updated = state_access->set(
-      "plugin.example_loopback_protocol.connected", "false", descriptor().plugin_id);
+      state_field, "false", instance_id);
     if (!updated.ok) {
       std::lock_guard<std::mutex> lock(mutex_);
       ++error_count_;
       return updated;
     }
   }
-  RCLCPP_INFO(logger_, "回环协议已断开");
+  RCLCPP_INFO(logger_, "回环协议实例已断开: %s", instance_id.c_str());
   return uran_plugin_api::Status::success();
 }
 

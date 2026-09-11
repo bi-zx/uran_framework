@@ -33,6 +33,17 @@ uran_plugin_api::Status ScopedStateAccess::register_field(
   return upstream_->register_field(owned_specification);
 }
 
+uran_plugin_api::Status ScopedStateAccess::unregister_field(
+  const std::string & field_name,
+  const std::string & source)
+{
+  if (source != owner_) {
+    return uran_plugin_api::Status::failure(
+      "插件只能注销自身运行实例拥有的状态字段: " + field_name);
+  }
+  return upstream_->unregister_field(field_name, owner_);
+}
+
 uran_plugin_api::Status ScopedStateAccess::set(
   const std::string & field_name,
   const std::string & value_json,
@@ -41,7 +52,7 @@ uran_plugin_api::Status ScopedStateAccess::set(
 {
   if (source != owner_) {
     return uran_plugin_api::Status::failure(
-      "插件状态写入来源必须与插件 ID 一致: " + field_name);
+      "插件状态写入来源必须与运行实例标识一致: " + field_name);
   }
   return upstream_->set(field_name, value_json, owner_, persistent);
 }

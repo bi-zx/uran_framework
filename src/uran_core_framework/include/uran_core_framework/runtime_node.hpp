@@ -8,6 +8,7 @@
 #include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/trigger.hpp>
 
+#include "uran_core_framework/capability_registry.hpp"
 #include "uran_core_framework/config_manager.hpp"
 #include "uran_core_framework/message_router.hpp"
 #include "uran_core_framework/plugin_manager.hpp"
@@ -49,6 +50,7 @@ private:
 
   std::shared_ptr<StateStore> state_store_;
   std::shared_ptr<RouteCatalog> route_catalog_;
+  std::shared_ptr<CapabilityRegistry> capability_registry_;
   ConfigManager config_manager_;
   std::unique_ptr<PluginManager> plugin_manager_;
   std::shared_ptr<uran_plugin_api::PluginContext> plugin_context_;

@@ -67,6 +67,30 @@ Status StateStore::register_field(const StateFieldSpec & specification)
   return Status::success();
 }
 
+Status StateStore::unregister_field(
+  const std::string & field_name,
+  const std::string & source)
+{
+  if (!valid_field_name(field_name)) {
+    return Status::failure("状态字段名称不合法: " + field_name);
+  }
+  if (source.empty()) {
+    return Status::failure("注销状态字段必须声明来源: " + field_name);
+  }
+
+  std::unique_lock<std::shared_mutex> lock(mutex_);
+  const auto iterator = specifications_.find(field_name);
+  if (iterator == specifications_.end()) {
+    return Status::failure("状态字段不存在: " + field_name);
+  }
+  if (iterator->second.owner != source) {
+    return Status::failure("状态字段只能由其所有者注销: " + field_name);
+  }
+  specifications_.erase(iterator);
+  values_.erase(field_name);
+  return Status::success("状态字段已注销: " + field_name);
+}
+
 Status StateStore::set(
   const std::string & field_name,
   const std::string & value_json,

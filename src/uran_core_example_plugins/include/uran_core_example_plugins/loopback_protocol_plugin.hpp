@@ -44,6 +44,8 @@ private:
   rclcpp::Logger logger_{rclcpp::get_logger("loopback_protocol")};
   std::shared_ptr<uran_plugin_api::StateAccess> state_access_;
   uran_plugin_api::DownlinkCallback downlink_callback_;
+  uran_plugin_api::PluginIdentity identity_;
+  std::string connected_state_field_;
   std::string channel_name_{"default"};
   bool configured_{false};
   bool active_{false};

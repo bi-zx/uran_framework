@@ -16,6 +16,9 @@ public:
   virtual ~StateAccess() = default;
 
   virtual Status register_field(const StateFieldSpec & specification) = 0;
+  virtual Status unregister_field(
+    const std::string & field_name,
+    const std::string & source) = 0;
   virtual Status set(
     const std::string & field_name,
     const std::string & value_json,

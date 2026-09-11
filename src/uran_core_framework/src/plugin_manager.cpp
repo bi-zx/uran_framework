@@ -8,6 +8,7 @@
 
 #include <pluginlib/exceptions.hpp>
 
+#include "uran_core_framework/capability_registry.hpp"
 #include "uran_core_framework/scoped_state_access.hpp"
 
 namespace uran_core_framework
@@ -16,14 +17,20 @@ namespace uran_core_framework
 namespace
 {
 
-Status parse_plugin_spec(const YAML::Node & node, PluginSpec & specification)
+Status parse_plugin_spec(
+  const YAML::Node & node,
+  const std::string & default_device_id,
+  PluginSpec & specification)
 {
   if (!node || !node.IsMap()) {
     return Status::failure("插件配置项必须是映射类型");
   }
 
   try {
-    specification.descriptor.plugin_id = node["id"].as<std::string>();
+    specification.identity.instance_id = node["instance_id"].as<std::string>();
+    specification.identity.device_id = node["device_id"] ?
+      node["device_id"].as<std::string>() : default_device_id;
+    specification.identity.component_id = node["component_id"].as<std::string>();
     specification.descriptor.class_type = node["class_type"].as<std::string>();
     specification.descriptor.plugin_type =
       node["plugin_type"] ? node["plugin_type"].as<std::string>() : std::string{};
@@ -31,6 +38,8 @@ Status parse_plugin_spec(const YAML::Node & node, PluginSpec & specification)
       node["plugin_version"] ? node["plugin_version"].as<std::string>() : std::string{};
     specification.descriptor.api_version =
       node["api_version"] ? node["api_version"].as<std::string>() : std::string{};
+    specification.ros_namespace =
+      node["ros_namespace"] ? node["ros_namespace"].as<std::string>() : std::string{};
     specification.enabled = node["enabled"] ? node["enabled"].as<bool>() : true;
     specification.priority = node["priority"] ? node["priority"].as<int>() : 0;
     specification.config_file =
@@ -42,10 +51,27 @@ Status parse_plugin_spec(const YAML::Node & node, PluginSpec & specification)
   return Status::success();
 }
 
+std::string build_instance_namespace(
+  std::string base_namespace,
+  const PluginIdentity & identity)
+{
+  while (base_namespace.size() > 1U && base_namespace.back() == '/') {
+    base_namespace.pop_back();
+  }
+  if (base_namespace == "/") {
+    base_namespace.clear();
+  }
+  return base_namespace + "/" + identity.device_id + "/" +
+         identity.component_id + "/" + identity.instance_id;
 }
 
-PluginManager::PluginManager(std::string base_package)
+}
+
+PluginManager::PluginManager(
+  std::string base_package,
+  std::shared_ptr<CapabilityRegistry> capability_registry)
 : base_package_(std::move(base_package)),
+  capability_registry_(std::move(capability_registry)),
   loader_(base_package_, "uran_plugin_api::Plugin")
 {
   if (base_package_.empty()) {
@@ -55,19 +81,19 @@ PluginManager::PluginManager(std::string base_package)
 
 PluginManager::~PluginManager()
 {
-  std::vector<std::string> plugin_ids;
+  std::vector<std::string> instance_ids;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    plugin_ids.reserve(entries_.size());
+    instance_ids.reserve(entries_.size());
     for (const auto & item : entries_) {
-      plugin_ids.push_back(item.first);
+      instance_ids.push_back(item.first);
     }
   }
 
   // 析构阶段采用尽力清理策略，禁止异常穿过析构函数边界。
-  for (const auto & plugin_id : plugin_ids) {
+  for (const auto & instance_id : instance_ids) {
     try {
-      static_cast<void>(unload(plugin_id));
+      static_cast<void>(unload(instance_id));
     } catch (...) {
     }
   }
@@ -78,54 +104,60 @@ Status PluginManager::load(
   const uran_plugin_api::PluginContext & context,
   const YAML::Node & config)
 {
+  const auto & identity = specification.identity;
   const auto & requested = specification.descriptor;
-  if (!valid_plugin_id(requested.plugin_id)) {
-    return Status::failure("插件 ID 不合法: " + requested.plugin_id);
+  if (!valid_identity_segment(identity.instance_id)) {
+    return Status::failure("插件实例标识不合法: " + identity.instance_id);
+  }
+  if (!valid_identity_segment(identity.device_id)) {
+    return Status::failure("设备标识不合法: " + identity.device_id);
+  }
+  if (!valid_identity_segment(identity.component_id)) {
+    return Status::failure("组件标识不合法: " + identity.component_id);
   }
   if (requested.class_type.empty()) {
-    return Status::failure("插件 class_type 不能为空: " + requested.plugin_id);
+    return Status::failure("插件 class_type 不能为空: " + identity.instance_id);
   }
   if (!specification.enabled) {
-    return Status::failure("插件已在配置中禁用: " + requested.plugin_id);
+    return Status::failure("插件实例已在配置中禁用: " + identity.instance_id);
   }
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (entries_.find(requested.plugin_id) != entries_.end()) {
-      return Status::failure("插件 ID 已存在: " + requested.plugin_id);
+    if (entries_.find(identity.instance_id) != entries_.end()) {
+      return Status::failure("插件实例标识已存在: " + identity.instance_id);
     }
     Entry placeholder;
     placeholder.specification = specification;
     placeholder.transitioning = true;
-    entries_.emplace(requested.plugin_id, std::move(placeholder));
+    entries_.emplace(identity.instance_id, std::move(placeholder));
   }
 
-  // 保证局部变量析构时先销毁插件实例，再销毁它使用的上下文
   std::shared_ptr<uran_plugin_api::PluginContext> plugin_context;
   std::shared_ptr<uran_plugin_api::Plugin> instance;
   try {
-    // ClassLoader 的内部状态不作为并发契约暴露，显式串行化类加载操作
+    // pluginlib 类加载器的内部状态不作为并发契约，创建过程显式串行化。
     std::lock_guard<std::mutex> loader_lock(loader_mutex_);
     instance = loader_.createSharedInstance(requested.class_type);
   } catch (const pluginlib::PluginlibException & exception) {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
+    entries_.erase(identity.instance_id);
     return Status::failure(
-      "加载插件类失败: " + requested.class_type + ", 原因: " + exception.what());
+      "加载插件类失败: " + requested.class_type + "，原因: " + exception.what());
   } catch (const std::exception & exception) {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
+    entries_.erase(identity.instance_id);
     return Status::failure(
-      "创建插件实例失败: " + requested.class_type + ", 原因: " + exception.what());
+      "创建插件实例失败: " + requested.class_type + "，原因: " + exception.what());
   } catch (...) {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
+    entries_.erase(identity.instance_id);
     return Status::failure("创建插件实例时发生未知异常: " + requested.class_type);
   }
 
   if (!instance) {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
+    entries_.erase(identity.instance_id);
     return Status::failure("插件加载器返回空实例: " + requested.class_type);
   }
 
@@ -134,66 +166,65 @@ Status PluginManager::load(
     actual = instance->descriptor();
   } catch (const std::exception & exception) {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
+    entries_.erase(identity.instance_id);
     return Status::failure(
-      "读取插件描述失败: " + requested.plugin_id + ", 原因: " + exception.what());
+      "读取插件实现描述失败: " + identity.instance_id + "，原因: " + exception.what());
   } catch (...) {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
-    return Status::failure("读取插件描述时发生未知异常: " + requested.plugin_id);
+    entries_.erase(identity.instance_id);
+    return Status::failure("读取插件实现描述时发生未知异常: " + identity.instance_id);
   }
-  if (actual.plugin_id != requested.plugin_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
-    return Status::failure(
-      "插件描述 ID 与配置不一致，配置=" + requested.plugin_id +
-      "，实现=" + actual.plugin_id);
-  }
+
   if (actual.plugin_type.empty() || actual.api_version.empty() || actual.class_type.empty()) {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
-    return Status::failure("插件描述缺少类型、API 版本或实现类: " + requested.plugin_id);
+    entries_.erase(identity.instance_id);
+    return Status::failure(
+      "插件实现描述缺少类型、API 版本或实现类: " + identity.instance_id);
   }
   if (actual.class_type != requested.class_type) {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
-    return Status::failure("插件描述实现类与配置不一致: " + requested.plugin_id);
+    entries_.erase(identity.instance_id);
+    return Status::failure("插件实现类与配置不一致: " + identity.instance_id);
   }
   if (!requested.plugin_type.empty() && actual.plugin_type != requested.plugin_type) {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
-    return Status::failure("插件类型与配置不一致: " + requested.plugin_id);
+    entries_.erase(identity.instance_id);
+    return Status::failure("插件类型与配置不一致: " + identity.instance_id);
   }
   if (!requested.api_version.empty() && actual.api_version != requested.api_version) {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
-    return Status::failure("插件 API 版本不兼容: " + requested.plugin_id);
+    entries_.erase(identity.instance_id);
+    return Status::failure("插件 API 版本不兼容: " + identity.instance_id);
   }
   if (!requested.plugin_version.empty() &&
     actual.plugin_version != requested.plugin_version)
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
-    return Status::failure("插件实现版本与配置不一致: " + requested.plugin_id);
+    entries_.erase(identity.instance_id);
+    return Status::failure("插件实现版本与配置不一致: " + identity.instance_id);
   }
 
   try {
     const auto node = context.node();
     if (!node) {
       std::lock_guard<std::mutex> lock(mutex_);
-      entries_.erase(requested.plugin_id);
-      return Status::failure("配置插件时 Runtime 节点已经失效: " + requested.plugin_id);
+      entries_.erase(identity.instance_id);
+      return Status::failure(
+        "配置插件时 Runtime 节点已经失效: " + identity.instance_id);
     }
     auto state_access = std::make_shared<ScopedStateAccess>(
-      context.state_access(), requested.plugin_id);
+      context.state_access(), identity.instance_id);
+    const auto instance_namespace = specification.ros_namespace.empty() ?
+      build_instance_namespace(context.instance_namespace(), identity) :
+      specification.ros_namespace;
     plugin_context = std::make_shared<uran_plugin_api::PluginContext>(
       node, std::move(state_access), context.route_resolver(),
-      context.instance_namespace());
+      identity, instance_namespace);
   } catch (const std::exception & exception) {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
+    entries_.erase(identity.instance_id);
     return Status::failure(
-      "创建插件受控上下文失败: " + requested.plugin_id +
+      "创建插件受控上下文失败: " + identity.instance_id +
       "，原因: " + exception.what());
   }
 
@@ -212,18 +243,20 @@ Status PluginManager::load(
     } catch (...) {
     }
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(requested.plugin_id);
+    entries_.erase(identity.instance_id);
     return Status::failure(
-      "配置插件失败: " + requested.plugin_id + ", 原因: " + configured.message);
+      "配置插件实例失败: " + identity.instance_id + "，原因: " + configured.message);
   }
 
   bool cancelled = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto iterator = entries_.find(requested.plugin_id);
+    auto iterator = entries_.find(identity.instance_id);
     if (iterator == entries_.end()) {
       cancelled = true;
     } else {
+      iterator->second.specification = specification;
+      iterator->second.specification.descriptor = actual;
       iterator->second.context = std::move(plugin_context);
       iterator->second.instance = instance;
       iterator->second.state = PluginState::configured;
@@ -232,33 +265,36 @@ Status PluginManager::load(
     }
   }
   if (cancelled) {
-    // 插件方法始终在管理器锁外调用，避免插件回调 Runtime 时形成锁重入
     try {
       static_cast<void>(instance->cleanup());
     } catch (...) {
     }
-    return Status::failure("插件加载事务已被取消: " + requested.plugin_id);
+    return Status::failure("插件加载事务已被取消: " + identity.instance_id);
   }
-  return Status::success("插件已配置: " + requested.plugin_id);
+  return Status::success("插件实例已配置: " + identity.instance_id);
 }
 
-Status PluginManager::activate(const std::string & plugin_id)
+Status PluginManager::activate(const std::string & instance_id)
 {
   std::shared_ptr<uran_plugin_api::Plugin> instance;
+  PluginIdentity identity;
+  int priority = 0;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto * entry = find_entry(plugin_id);
+    auto * entry = find_entry(instance_id);
     if (entry == nullptr) {
-      return Status::failure("插件不存在: " + plugin_id);
+      return Status::failure("插件实例不存在: " + instance_id);
     }
     if (entry->transitioning) {
-      return Status::failure("插件正在执行其他生命周期操作: " + plugin_id);
+      return Status::failure("插件实例正在执行其他生命周期操作: " + instance_id);
     }
     if (entry->state != PluginState::configured && entry->state != PluginState::inactive) {
-      return Status::failure("当前状态不允许激活插件: " + plugin_id);
+      return Status::failure("当前状态不允许激活插件实例: " + instance_id);
     }
     entry->transitioning = true;
     instance = entry->instance;
+    identity = entry->specification.identity;
+    priority = entry->specification.priority;
   }
 
   Status result;
@@ -270,10 +306,31 @@ Status PluginManager::activate(const std::string & plugin_id)
     result = Status::failure("插件 activate 抛出未知异常");
   }
 
+  if (result.ok && capability_registry_) {
+    try {
+      const auto capabilities = instance->capabilities();
+      result = capability_registry_->register_instance(
+        identity, capabilities.features, priority);
+    } catch (const std::exception & exception) {
+      result = Status::failure(
+        std::string("读取或注册插件能力失败: ") + exception.what());
+    } catch (...) {
+      result = Status::failure("读取或注册插件能力时发生未知异常");
+    }
+    if (!result.ok) {
+      // 能力登记失败时插件不能进入可用状态，尽力恢复到停止状态。
+      try {
+        static_cast<void>(instance->deactivate());
+      } catch (...) {
+      }
+      static_cast<void>(capability_registry_->unregister_instance(instance_id));
+    }
+  }
+
   std::lock_guard<std::mutex> lock(mutex_);
-  auto * entry = find_entry(plugin_id);
+  auto * entry = find_entry(instance_id);
   if (entry == nullptr || entry->instance != instance) {
-    return Status::failure("插件激活事务失效: " + plugin_id);
+    return Status::failure("插件激活事务失效: " + instance_id);
   }
   entry->transitioning = false;
   entry->state = result.ok ? PluginState::active : PluginState::error;
@@ -281,23 +338,23 @@ Status PluginManager::activate(const std::string & plugin_id)
   return result;
 }
 
-Status PluginManager::deactivate(const std::string & plugin_id)
+Status PluginManager::deactivate(const std::string & instance_id)
 {
   std::shared_ptr<uran_plugin_api::Plugin> instance;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto * entry = find_entry(plugin_id);
+    auto * entry = find_entry(instance_id);
     if (entry == nullptr) {
-      return Status::failure("插件不存在: " + plugin_id);
+      return Status::failure("插件实例不存在: " + instance_id);
     }
     if (entry->transitioning) {
-      return Status::failure("插件正在执行其他生命周期操作: " + plugin_id);
+      return Status::failure("插件实例正在执行其他生命周期操作: " + instance_id);
     }
     if (entry->state == PluginState::inactive || entry->state == PluginState::configured) {
-      return Status::success("插件已经停止: " + plugin_id);
+      return Status::success("插件实例已经停止: " + instance_id);
     }
     if (entry->state != PluginState::active && entry->state != PluginState::error) {
-      return Status::failure("当前状态不允许停用插件: " + plugin_id);
+      return Status::failure("当前状态不允许停用插件实例: " + instance_id);
     }
     entry->transitioning = true;
     instance = entry->instance;
@@ -311,11 +368,14 @@ Status PluginManager::deactivate(const std::string & plugin_id)
   } catch (...) {
     result = Status::failure("插件 deactivate 抛出未知异常");
   }
+  if (capability_registry_) {
+    static_cast<void>(capability_registry_->unregister_instance(instance_id));
+  }
 
   std::lock_guard<std::mutex> lock(mutex_);
-  auto * entry = find_entry(plugin_id);
+  auto * entry = find_entry(instance_id);
   if (entry == nullptr || entry->instance != instance) {
-    return Status::failure("插件停用事务失效: " + plugin_id);
+    return Status::failure("插件停用事务失效: " + instance_id);
   }
   entry->transitioning = false;
   entry->state = result.ok ? PluginState::inactive : PluginState::error;
@@ -323,28 +383,27 @@ Status PluginManager::deactivate(const std::string & plugin_id)
   return result;
 }
 
-Status PluginManager::unload(const std::string & plugin_id)
+Status PluginManager::unload(const std::string & instance_id)
 {
   PluginState state;
-  // 上下文局部副本必须比插件实例局部副本存活久
+  // 上下文局部副本必须比插件实例局部副本存活久。
   std::shared_ptr<uran_plugin_api::PluginContext> plugin_context;
   std::shared_ptr<uran_plugin_api::Plugin> instance;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto * entry = find_entry(plugin_id);
+    auto * entry = find_entry(instance_id);
     if (entry == nullptr) {
-      return Status::failure("插件不存在: " + plugin_id);
+      return Status::failure("插件实例不存在: " + instance_id);
     }
     if (entry->transitioning) {
-      return Status::failure("插件正在执行其他生命周期操作: " + plugin_id);
+      return Status::failure("插件实例正在执行其他生命周期操作: " + instance_id);
     }
     if (!entry->instance) {
-      return Status::failure("插件实例尚未完成创建: " + plugin_id);
+      return Status::failure("插件实例尚未完成创建: " + instance_id);
     }
     state = entry->state;
     plugin_context = entry->context;
     instance = entry->instance;
-    // 停用和清理，占用一个生命周期事务
     entry->transitioning = true;
   }
   static_cast<void>(plugin_context);
@@ -358,9 +417,12 @@ Status PluginManager::unload(const std::string & plugin_id)
     } catch (...) {
       stopped = Status::failure("插件 deactivate 抛出未知异常");
     }
+    if (capability_registry_) {
+      static_cast<void>(capability_registry_->unregister_instance(instance_id));
+    }
     if (!stopped.ok) {
       std::lock_guard<std::mutex> lock(mutex_);
-      auto * entry = find_entry(plugin_id);
+      auto * entry = find_entry(instance_id);
       if (entry != nullptr && entry->instance == instance) {
         entry->transitioning = false;
         entry->state = PluginState::error;
@@ -380,9 +442,9 @@ Status PluginManager::unload(const std::string & plugin_id)
   }
 
   std::lock_guard<std::mutex> lock(mutex_);
-  auto * entry = find_entry(plugin_id);
+  auto * entry = find_entry(instance_id);
   if (entry == nullptr || entry->instance != instance) {
-    return Status::failure("插件清理事务失效: " + plugin_id);
+    return Status::failure("插件清理事务失效: " + instance_id);
   }
   if (!cleaned.ok) {
     entry->transitioning = false;
@@ -390,8 +452,11 @@ Status PluginManager::unload(const std::string & plugin_id)
     entry->error = cleaned.message;
     return cleaned;
   }
-  entries_.erase(plugin_id);
-  return Status::success("插件已卸载: " + plugin_id);
+  if (capability_registry_) {
+    static_cast<void>(capability_registry_->unregister_instance(instance_id));
+  }
+  entries_.erase(instance_id);
+  return Status::success("插件实例已卸载: " + instance_id);
 }
 
 Status PluginManager::configure_and_load_all(
@@ -399,11 +464,20 @@ Status PluginManager::configure_and_load_all(
   const uran_plugin_api::PluginContext & context)
 {
   YAML::Node list = plugins_node;
-  if (plugins_node && plugins_node.IsMap() && plugins_node["plugins"]) {
+  std::string default_device_id;
+  if (plugins_node && plugins_node.IsMap()) {
+    if (plugins_node["default_device_id"]) {
+      try {
+        default_device_id = plugins_node["default_device_id"].as<std::string>();
+      } catch (const YAML::Exception & exception) {
+        return Status::failure(
+          std::string("默认设备标识配置无效: ") + exception.what());
+      }
+    }
     list = plugins_node["plugins"];
   }
   if (!list || !list.IsSequence()) {
-    return Status::failure("插件配置必须是序列类型");
+    return Status::failure("插件配置必须包含 plugins 序列");
   }
 
   struct Pending
@@ -416,7 +490,8 @@ Status PluginManager::configure_and_load_all(
 
   for (const auto & item : list) {
     Pending value;
-    const auto parsed = parse_plugin_spec(item, value.specification);
+    const auto parsed = parse_plugin_spec(
+      item, default_device_id, value.specification);
     if (!parsed.ok) {
       return parsed;
     }
@@ -433,8 +508,8 @@ Status PluginManager::configure_and_load_all(
       }
     } catch (const YAML::Exception & exception) {
       return Status::failure(
-        "读取插件私有配置失败: " + value.specification.descriptor.plugin_id +
-        ", 原因: " + exception.what());
+        "读取插件私有配置失败: " + value.specification.identity.instance_id +
+        "，原因: " + exception.what());
     }
     pending.push_back(std::move(value));
   }
@@ -454,10 +529,11 @@ Status PluginManager::configure_and_load_all(
       }
       return loaded;
     }
-    loaded_ids.push_back(item.specification.descriptor.plugin_id);
+    const auto & instance_id = item.specification.identity.instance_id;
+    loaded_ids.push_back(instance_id);
 
     if (item.auto_activate) {
-      const auto activated = activate(item.specification.descriptor.plugin_id);
+      const auto activated = activate(instance_id);
       if (!activated.ok) {
         for (auto iterator = loaded_ids.rbegin(); iterator != loaded_ids.rend(); ++iterator) {
           static_cast<void>(unload(*iterator));
@@ -466,7 +542,7 @@ Status PluginManager::configure_and_load_all(
       }
     }
   }
-  return Status::success("插件配置加载完成");
+  return Status::success("插件实例配置加载完成");
 }
 
 std::vector<PluginRuntimeInfo> PluginManager::list() const
@@ -495,12 +571,12 @@ std::vector<PluginRuntimeInfo> PluginManager::list() const
   result.reserve(snapshot.size());
   for (const auto & item : snapshot) {
     PluginRuntimeInfo info;
+    info.identity = item.specification.identity;
     info.descriptor = item.specification.descriptor;
     info.state = item.state;
     info.error = item.error;
     if (item.instance) {
       try {
-        info.descriptor = item.instance->descriptor();
         info.health = item.instance->health();
         info.capabilities = item.instance->capabilities();
       } catch (const std::exception & exception) {
@@ -516,56 +592,48 @@ std::vector<PluginRuntimeInfo> PluginManager::list() const
   return result;
 }
 
-std::vector<std::shared_ptr<uran_plugin_api::Plugin>> PluginManager::instances() const
+std::vector<ActivePluginInstance> PluginManager::active_instances() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  std::vector<std::shared_ptr<uran_plugin_api::Plugin>> result;
-  result.reserve(entries_.size());
-  for (const auto & item : entries_) {
-    if (item.second.instance) {
-      result.push_back(item.second.instance);
-    }
-  }
-  return result;
-}
-
-std::vector<std::shared_ptr<uran_plugin_api::Plugin>> PluginManager::active_instances() const
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  std::vector<std::shared_ptr<uran_plugin_api::Plugin>> result;
+  std::vector<ActivePluginInstance> result;
   result.reserve(entries_.size());
   for (const auto & item : entries_) {
     if (!item.second.transitioning &&
       item.second.state == PluginState::active && item.second.instance)
     {
-      result.push_back(item.second.instance);
+      result.push_back(ActivePluginInstance{
+        item.second.specification.identity,
+        item.second.specification.descriptor,
+        item.second.specification.priority,
+        item.second.instance});
     }
   }
   return result;
 }
 
-bool PluginManager::has(const std::string & plugin_id) const
+bool PluginManager::has(const std::string & instance_id) const
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  return entries_.find(plugin_id) != entries_.end();
+  return entries_.find(instance_id) != entries_.end();
 }
 
-PluginManager::Entry * PluginManager::find_entry(const std::string & plugin_id)
+PluginManager::Entry * PluginManager::find_entry(const std::string & instance_id)
 {
-  const auto iterator = entries_.find(plugin_id);
+  const auto iterator = entries_.find(instance_id);
   return iterator == entries_.end() ? nullptr : &iterator->second;
 }
 
-const PluginManager::Entry * PluginManager::find_entry(const std::string & plugin_id) const
+const PluginManager::Entry * PluginManager::find_entry(
+  const std::string & instance_id) const
 {
-  const auto iterator = entries_.find(plugin_id);
+  const auto iterator = entries_.find(instance_id);
   return iterator == entries_.end() ? nullptr : &iterator->second;
 }
 
-bool PluginManager::valid_plugin_id(const std::string & plugin_id)
+bool PluginManager::valid_identity_segment(const std::string & value)
 {
-  static const std::regex pattern(R"(^[A-Za-z][A-Za-z0-9_.-]*$)");
-  return std::regex_match(plugin_id, pattern);
+  static const std::regex pattern(R"(^[A-Za-z][A-Za-z0-9_]*$)");
+  return std::regex_match(value, pattern);
 }
 
 }

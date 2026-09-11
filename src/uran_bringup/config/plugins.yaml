@@ -1,12 +1,25 @@
-primary_protocol: example_loopback_protocol
+default_device_id: robot_001
+primary_protocol_instance: protocol_primary
 
 plugins:
-  - id: example_loopback_protocol
+  - instance_id: protocol_primary
+    component_id: communication
     plugin_type: protocol
     class_type: uran_core_example_plugins/LoopbackProtocolPlugin
     api_version: "1.0"
     enabled: true
     auto_activate: true
-    priority: 0
+    priority: 100
     config:
-      channel: framework_demo
+      channel: primary
+
+  - instance_id: protocol_backup
+    component_id: communication
+    plugin_type: protocol
+    class_type: uran_core_example_plugins/LoopbackProtocolPlugin
+    api_version: "1.0"
+    enabled: true
+    auto_activate: true
+    priority: 50
+    config:
+      channel: backup

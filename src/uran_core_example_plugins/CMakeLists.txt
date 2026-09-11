@@ -15,6 +15,8 @@ find_package(ament_cmake REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(uran_plugin_api REQUIRED)
+find_package(yaml_cpp_vendor REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
   src/loopback_protocol_plugin.cpp
@@ -31,6 +33,7 @@ ament_target_dependencies(${PROJECT_NAME}
   rclcpp
   uran_plugin_api
 )
+target_link_libraries(${PROJECT_NAME} yaml-cpp)
 
 pluginlib_export_plugin_description_file(
   uran_plugin_api
@@ -51,6 +54,23 @@ install(
 )
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(pluginlib rclcpp uran_plugin_api)
+ament_export_dependencies(pluginlib rclcpp uran_plugin_api yaml_cpp_vendor)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  find_package(uran_core_framework REQUIRED)
+
+  ament_add_gtest(
+    test_loopback_multi_instance
+    test/test_loopback_multi_instance.cpp
+  )
+  target_link_libraries(test_loopback_multi_instance ${PROJECT_NAME})
+  ament_target_dependencies(
+    test_loopback_multi_instance
+    rclcpp
+    uran_core_framework
+    uran_plugin_api
+  )
+endif()
 
 ament_package()

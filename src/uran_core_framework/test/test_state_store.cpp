@@ -42,6 +42,10 @@ TEST(ScopedStateAccess, RejectsImpersonatedOwner)
   EXPECT_FALSE(access.register_field(
       StateFieldSpec{
         "plugin.other.ready", "bool", "", "another_plugin", false}).ok);
+  EXPECT_FALSE(access.unregister_field(
+      "plugin.example.ready", "another_plugin").ok);
+  EXPECT_TRUE(access.unregister_field(
+      "plugin.example.ready", "example_plugin").ok);
 }
 
 TEST(StateStore, InvalidJsonIsRejected)
@@ -127,6 +131,22 @@ TEST(StateStore, SnapshotPreservesJsonTypes)
   EXPECT_EQ(
     store.snapshot_json(),
     R"({"ext.demo.boolean":true,"ext.demo.object":{"count":2}})");
+}
+
+TEST(StateStore, OnlyOwnerCanUnregisterField)
+{
+  StateStore store;
+  ASSERT_TRUE(store.register_field(
+      StateFieldSpec{"plugin.camera.ready", "bool", "", "camera_main", false}).ok);
+  ASSERT_TRUE(store.set(
+      "plugin.camera.ready", "true", "camera_main").ok);
+
+  EXPECT_FALSE(store.unregister_field(
+      "plugin.camera.ready", "other_instance").ok);
+  EXPECT_TRUE(store.contains("plugin.camera.ready"));
+  EXPECT_TRUE(store.unregister_field(
+      "plugin.camera.ready", "camera_main").ok);
+  EXPECT_FALSE(store.contains("plugin.camera.ready"));
 }
 
 }

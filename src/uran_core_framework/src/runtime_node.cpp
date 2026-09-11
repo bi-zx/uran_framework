@@ -26,6 +26,7 @@ RuntimeNode::RuntimeNode(const rclcpp::NodeOptions & options)
 : Node("uran_runtime", options),
   state_store_(std::make_shared<StateStore>(true)),
   route_catalog_(std::make_shared<RouteCatalog>()),
+  capability_registry_(std::make_shared<CapabilityRegistry>()),
   message_router_(std::make_shared<MessageRouter>()),
   protocol_gateway_(std::make_shared<ProtocolGateway>()),
   started_at_(std::chrono::steady_clock::now())
@@ -55,9 +56,11 @@ RuntimeNode::RuntimeNode(const rclcpp::NodeOptions & options)
   register_core_state_fields();
   static_cast<void>(state_store_->set("system.ready", "false", kRuntimeOwner));
   static_cast<void>(state_store_->set("system.uptime_seconds", "0", kRuntimeOwner));
-  static_cast<void>(state_store_->set("plugin.count", "0", kRuntimeOwner));
-  static_cast<void>(state_store_->set("network.protocol_count", "0", kRuntimeOwner));
-  static_cast<void>(state_store_->set("network.primary_protocol", "\"\"", kRuntimeOwner));
+  static_cast<void>(state_store_->set("plugin_instance.count", "0", kRuntimeOwner));
+  static_cast<void>(state_store_->set("capability.count", "0", kRuntimeOwner));
+  static_cast<void>(state_store_->set("network.protocol_instance_count", "0", kRuntimeOwner));
+  static_cast<void>(state_store_->set(
+      "network.primary_protocol_instance", "\"\"", kRuntimeOwner));
 
   snapshot_publisher_ = create_publisher<std_msgs::msg::String>(
     route_or("state_snapshot", "/uran/runtime/state_snapshot"), 10);
@@ -88,7 +91,10 @@ RuntimeNode::RuntimeNode(const rclcpp::NodeOptions & options)
     std::bind(&RuntimeNode::publish_unhandled_downlink, this, std::placeholders::_1));
   const std::weak_ptr<MessageRouter> weak_router = message_router_;
   protocol_gateway_->set_downlink_handler(
-    [weak_router](const uran_plugin_api::DownlinkEnvelope & message) {
+    [weak_router](
+      const PluginIdentity &,
+      const uran_plugin_api::DownlinkEnvelope & message)
+    {
       if (const auto router = weak_router.lock()) {
         static_cast<void>(router->route(message));
       }
@@ -118,10 +124,24 @@ Status RuntimeNode::initialize_plugins()
     return Status::success("插件系统已经初始化");
   }
 
-  auto candidate_manager = std::make_unique<PluginManager>("uran_plugin_api");
+  auto candidate_registry = std::make_shared<CapabilityRegistry>();
+  auto candidate_manager = std::make_unique<PluginManager>(
+    "uran_plugin_api", candidate_registry);
   auto candidate_context = std::make_shared<uran_plugin_api::PluginContext>(
-    shared_from_this(), state_store_, route_catalog_, get_namespace());
-  std::string configured_primary_protocol;
+    shared_from_this(), state_store_, route_catalog_,
+    PluginIdentity{"uran_runtime", "runtime", "runtime"}, get_namespace());
+  auto candidate_gateway = std::make_shared<ProtocolGateway>();
+  const std::weak_ptr<MessageRouter> weak_router = message_router_;
+  candidate_gateway->set_downlink_handler(
+    [weak_router](
+      const PluginIdentity &,
+      const uran_plugin_api::DownlinkEnvelope & message)
+    {
+      if (const auto router = weak_router.lock()) {
+        static_cast<void>(router->route(message));
+      }
+    });
+  std::string configured_primary_instance;
 
   if (!plugin_config_path_.empty()) {
     const auto loaded = config_manager_.load_file(plugin_config_path_);
@@ -130,77 +150,63 @@ Status RuntimeNode::initialize_plugins()
     }
 
     const auto root = config_manager_.snapshot();
-    if (root["primary_protocol"]) {
+    if (root["primary_protocol_instance"]) {
       try {
-        configured_primary_protocol = root["primary_protocol"].as<std::string>();
+        configured_primary_instance = root["primary_protocol_instance"].as<std::string>();
       } catch (const YAML::Exception & exception) {
         return Status::failure(
-          std::string("主协议配置无效: ") + exception.what());
+          std::string("主协议实例配置无效: ") + exception.what());
       }
     }
-    const auto plugins = root["plugins"] ? root["plugins"] : root;
     const auto configured = candidate_manager->configure_and_load_all(
-      plugins, *candidate_context);
+      root, *candidate_context);
     if (!configured.ok) {
       return configured;
     }
   }
 
-  std::vector<std::string> registered_protocols;
   // 只有已激活的协议才能进入发送链路，避免调用仅完成配置的插件
   for (const auto & plugin : candidate_manager->active_instances()) {
-    const auto protocol = std::dynamic_pointer_cast<uran_plugin_api::ProtocolPlugin>(plugin);
+    const auto protocol = std::dynamic_pointer_cast<uran_plugin_api::ProtocolPlugin>(
+      plugin.instance);
     if (!protocol) {
       continue;
     }
-    uran_plugin_api::PluginDescriptor descriptor;
-    try {
-      descriptor = protocol->descriptor();
-    } catch (const std::exception & exception) {
-      for (const auto & protocol_id : registered_protocols) {
-        static_cast<void>(protocol_gateway_->unregister_protocol(protocol_id));
-      }
-      return Status::failure(
-        std::string("读取协议插件描述失败: ") + exception.what());
-    } catch (...) {
-      for (const auto & protocol_id : registered_protocols) {
-        static_cast<void>(protocol_gateway_->unregister_protocol(protocol_id));
-      }
-      return Status::failure("读取协议插件描述时发生未知异常");
-    }
-    const auto registered = protocol_gateway_->register_protocol(
-      descriptor.plugin_id, protocol);
+    const auto registered = candidate_gateway->register_protocol(
+      plugin.identity, protocol, plugin.priority);
     if (!registered.ok) {
-      for (const auto & protocol_id : registered_protocols) {
-        static_cast<void>(protocol_gateway_->unregister_protocol(protocol_id));
-      }
       return registered;
     }
-    registered_protocols.push_back(descriptor.plugin_id);
   }
 
-  if (!configured_primary_protocol.empty()) {
-    const auto selected = protocol_gateway_->set_primary(configured_primary_protocol);
+  if (!configured_primary_instance.empty()) {
+    const auto selected = candidate_gateway->set_primary_instance(
+      configured_primary_instance);
     if (!selected.ok) {
-      for (const auto & protocol_id : registered_protocols) {
-        static_cast<void>(protocol_gateway_->unregister_protocol(protocol_id));
-      }
       return selected;
     }
   }
 
+  if (protocol_gateway_) {
+    protocol_gateway_->set_downlink_handler(nullptr);
+  }
   plugin_manager_ = std::move(candidate_manager);
   plugin_context_ = std::move(candidate_context);
+  capability_registry_ = std::move(candidate_registry);
+  protocol_gateway_ = std::move(candidate_gateway);
   plugins_initialized_ = true;
   const auto plugin_count = plugin_manager_->list().size();
   static_cast<void>(state_store_->set(
-      "plugin.count", std::to_string(plugin_count), kRuntimeOwner));
-  const auto protocol_ids = protocol_gateway_->protocol_ids();
+      "plugin_instance.count", std::to_string(plugin_count), kRuntimeOwner));
   static_cast<void>(state_store_->set(
-      "network.protocol_count", std::to_string(protocol_ids.size()), kRuntimeOwner));
+      "capability.count", std::to_string(capability_registry_->capability_count()),
+      kRuntimeOwner));
+  const auto protocol_ids = protocol_gateway_->protocol_instance_ids();
   static_cast<void>(state_store_->set(
-      "network.primary_protocol",
-      nlohmann::json(protocol_gateway_->primary_protocol()).dump(), kRuntimeOwner));
+      "network.protocol_instance_count", std::to_string(protocol_ids.size()), kRuntimeOwner));
+  static_cast<void>(state_store_->set(
+      "network.primary_protocol_instance",
+      nlohmann::json(protocol_gateway_->primary_instance_id()).dump(), kRuntimeOwner));
   static_cast<void>(state_store_->set("system.ready", "true", kRuntimeOwner));
   RCLCPP_INFO(get_logger(), "插件系统初始化完成，已加载 %zu 个插件", plugin_count);
   return Status::success("插件系统初始化完成");
@@ -223,8 +229,11 @@ void RuntimeNode::publish_heartbeat()
   nlohmann::json heartbeat;
   heartbeat["ready"] = plugins_initialized_;
   heartbeat["uptime_seconds"] = elapsed;
-  heartbeat["plugin_count"] = plugin_manager_ ? plugin_manager_->list().size() : 0U;
-  heartbeat["protocol_count"] = protocol_gateway_ ? protocol_gateway_->protocol_ids().size() : 0U;
+  heartbeat["plugin_instance_count"] = plugin_manager_ ? plugin_manager_->list().size() : 0U;
+  heartbeat["capability_count"] = capability_registry_ ?
+    capability_registry_->capability_count() : 0U;
+  heartbeat["protocol_instance_count"] = protocol_gateway_ ?
+    protocol_gateway_->protocol_instance_ids().size() : 0U;
 
   std_msgs::msg::String message;
   message.data = heartbeat.dump();
@@ -279,7 +288,9 @@ void RuntimeNode::on_uplink_text(const std_msgs::msg::String::SharedPtr message)
       payload.at("payload").get<std::string>() : payload.at("payload").dump();
     envelope.correlation_id = payload.value("correlation_id", std::string{});
     envelope.urgent = payload.value("urgent", false);
-    const auto preferred = payload.value("preferred_protocol", std::string{});
+    const auto preferred = payload.value(
+      "preferred_protocol_instance",
+      payload.value("preferred_protocol", std::string{}));
 
     const auto sent = protocol_gateway_->publish(envelope, preferred);
     if (!sent.ok) {
@@ -332,13 +343,15 @@ void RuntimeNode::register_core_state_fields()
       StateFieldSpec{
         "system.uptime_seconds", "int64", "s", kRuntimeOwner, false}));
   static_cast<void>(state_store_->register_field(
-      StateFieldSpec{"plugin.count", "uint64", "", kRuntimeOwner, false}));
+      StateFieldSpec{"plugin_instance.count", "uint64", "", kRuntimeOwner, false}));
+  static_cast<void>(state_store_->register_field(
+      StateFieldSpec{"capability.count", "uint64", "", kRuntimeOwner, false}));
   static_cast<void>(state_store_->register_field(
       StateFieldSpec{
-        "network.protocol_count", "uint64", "", kRuntimeOwner, false}));
+        "network.protocol_instance_count", "uint64", "", kRuntimeOwner, false}));
   static_cast<void>(state_store_->register_field(
       StateFieldSpec{
-        "network.primary_protocol", "string", "", kRuntimeOwner, false}));
+        "network.primary_protocol_instance", "string", "", kRuntimeOwner, false}));
 }
 
 }
