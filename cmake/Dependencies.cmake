@@ -1,0 +1,15 @@
+find_package(Threads REQUIRED)
+find_package(yaml-cpp REQUIRED)
+find_package(nlohmann_json 3.10 QUIET)
+if(NOT nlohmann_json_FOUND)
+  if(NOT URAN_FETCH_DEPENDENCIES)
+    message(FATAL_ERROR "Install nlohmann_json >= 3.10 or enable URAN_FETCH_DEPENDENCIES")
+  endif()
+  include(FetchContent)
+  set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+  set(JSON_Install ON CACHE BOOL "" FORCE)
+  FetchContent_Declare(nlohmann_json
+    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+    URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d)
+  FetchContent_MakeAvailable(nlohmann_json)
+endif()

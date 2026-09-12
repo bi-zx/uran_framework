@@ -62,13 +62,15 @@ Status ProtocolGateway::register_protocol(
     return Status::failure("插件类型不是 protocol: " + identity.instance_id);
   }
 
+  std::uint64_t generation = 0;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (protocols_.find(identity.instance_id) != protocols_.end()) {
       return Status::failure("协议实例已经注册: " + identity.instance_id);
     }
+    generation = next_generation_++;
     protocols_.emplace(
-      identity.instance_id, Entry{identity, protocol, priority});
+      identity.instance_id, Entry{identity, protocol, priority, generation});
     if (!primary_explicit_) {
       primary_instance_id_.clear();
     }
@@ -78,9 +80,9 @@ Status ProtocolGateway::register_protocol(
   try {
     const std::weak_ptr<ProtocolGateway> weak_self = weak_from_this();
     protocol->set_downlink_callback(
-      [weak_self, identity](const uran_plugin_api::DownlinkEnvelope & message) {
+      [weak_self, identity, generation](const uran_plugin_api::DownlinkEnvelope & message) {
         if (const auto self = weak_self.lock()) {
-          self->dispatch_downlink(identity, message);
+          self->dispatch_downlink(identity, generation, message);
         }
       });
   } catch (const std::exception & exception) {
@@ -163,14 +165,16 @@ Status ProtocolGateway::publish(
   {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::string> selected_ids;
-    const auto append_instance = [this, &ordered, &selected_ids](const std::string & instance_id) {
+    const auto message_device = message.source.device_id;
+    const auto append_instance = [this, &ordered, &selected_ids, &message_device](const std::string & instance_id) {
         if (instance_id.empty() ||
           std::find(selected_ids.begin(), selected_ids.end(), instance_id) != selected_ids.end())
         {
           return;
         }
         const auto iterator = protocols_.find(instance_id);
-        if (iterator != protocols_.end()) {
+        if (iterator != protocols_.end() &&
+          (message_device.empty() || iterator->second.identity.device_id == message_device)) {
           selected_ids.push_back(instance_id);
           ordered.push_back(iterator->second);
         }
@@ -181,7 +185,8 @@ Status ProtocolGateway::publish(
 
     std::vector<Entry> remaining;
     for (const auto & item : protocols_) {
-      if (std::find(selected_ids.begin(), selected_ids.end(), item.first) == selected_ids.end()) {
+      if ((message_device.empty() || item.second.identity.device_id == message_device) &&
+        std::find(selected_ids.begin(), selected_ids.end(), item.first) == selected_ids.end()) {
         remaining.push_back(item.second);
       }
     }
@@ -256,6 +261,7 @@ void ProtocolGateway::select_default_primary_locked()
 
 void ProtocolGateway::dispatch_downlink(
   const PluginIdentity & identity,
+  std::uint64_t generation,
   const uran_plugin_api::DownlinkEnvelope & message) const
 {
   DownlinkHandler handler;
@@ -263,7 +269,8 @@ void ProtocolGateway::dispatch_downlink(
     std::lock_guard<std::mutex> lock(mutex_);
     const auto protocol_iterator = protocols_.find(identity.instance_id);
     if (protocol_iterator == protocols_.end() ||
-      protocol_iterator->second.identity != identity)
+      protocol_iterator->second.identity != identity ||
+      protocol_iterator->second.generation != generation)
     {
       return;
     }
@@ -271,11 +278,22 @@ void ProtocolGateway::dispatch_downlink(
   }
   if (handler) {
     try {
-      handler(identity, message);
+      auto identified = message;
+      identified.source = identity;
+      identified.source_generation = generation;
+      handler(identity, identified);
     } catch (...) {
       // 下行回调可能来自网络线程，异常不得穿透到第三方网络库。
     }
   }
+}
+
+bool ProtocolGateway::current_source(const PluginIdentity & identity, std::uint64_t generation) const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto it = protocols_.find(identity.instance_id);
+  return it != protocols_.end() && it->second.identity == identity &&
+    it->second.generation == generation;
 }
 
 }

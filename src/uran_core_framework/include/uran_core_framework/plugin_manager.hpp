@@ -6,13 +6,13 @@
 #include <string>
 #include <vector>
 
-#include <pluginlib/class_loader.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include "uran_core_framework/types.hpp"
 #include "uran_core_framework/visibility_control.hpp"
 #include "uran_plugin_api/plugin.hpp"
 #include "uran_plugin_api/plugin_context.hpp"
+#include "uran_plugin_api/plugin_loader.hpp"
 
 namespace uran_core_framework
 {
@@ -36,7 +36,7 @@ class URAN_CORE_FRAMEWORK_PUBLIC PluginManager final
 {
 public:
   explicit PluginManager(
-    std::string base_package,
+    std::shared_ptr<uran_plugin_api::PluginLoader> loader,
     std::shared_ptr<CapabilityRegistry> capability_registry = nullptr);
   ~PluginManager();
 
@@ -58,6 +58,7 @@ public:
   /** @brief 返回处于稳定激活状态、可以参与业务调用的插件实例。 */
   std::vector<ActivePluginInstance> active_instances() const;
   bool has(const std::string & instance_id) const;
+  std::shared_ptr<uran_plugin_api::Plugin> instance(const std::string & instance_id) const;
 
 private:
   struct Entry
@@ -75,9 +76,8 @@ private:
   const Entry * find_entry(const std::string & instance_id) const;
   static bool valid_identity_segment(const std::string & value);
 
-  std::string base_package_;
   std::shared_ptr<CapabilityRegistry> capability_registry_;
-  pluginlib::ClassLoader<uran_plugin_api::Plugin> loader_;
+  std::shared_ptr<uran_plugin_api::PluginLoader> loader_;
   std::mutex loader_mutex_;
   mutable std::mutex mutex_;
   std::map<std::string, Entry> entries_;

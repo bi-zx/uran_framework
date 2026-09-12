@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
-#include <pluginlib/exceptions.hpp>
+#include "uran_core_framework/scoped_platform_services.hpp"
 
 #include "uran_core_framework/capability_registry.hpp"
 #include "uran_core_framework/scoped_state_access.hpp"
@@ -38,8 +38,8 @@ Status parse_plugin_spec(
       node["plugin_version"] ? node["plugin_version"].as<std::string>() : std::string{};
     specification.descriptor.api_version =
       node["api_version"] ? node["api_version"].as<std::string>() : std::string{};
-    specification.ros_namespace =
-      node["ros_namespace"] ? node["ros_namespace"].as<std::string>() : std::string{};
+    specification.route_scope =
+      node["route_scope"] ? node["route_scope"].as<std::string>() : std::string{};
     specification.enabled = node["enabled"] ? node["enabled"].as<bool>() : true;
     specification.priority = node["priority"] ? node["priority"].as<int>() : 0;
     specification.config_file =
@@ -51,31 +51,24 @@ Status parse_plugin_spec(
   return Status::success();
 }
 
-std::string build_instance_namespace(
-  std::string base_namespace,
+std::string build_route_scope(
+  std::string base_scope,
   const PluginIdentity & identity)
 {
-  while (base_namespace.size() > 1U && base_namespace.back() == '/') {
-    base_namespace.pop_back();
-  }
-  if (base_namespace == "/") {
-    base_namespace.clear();
-  }
-  return base_namespace + "/" + identity.device_id + "/" +
-         identity.component_id + "/" + identity.instance_id;
+  return (base_scope.empty() ? std::string{} : base_scope + ".") + identity.device_id + "." +
+         identity.component_id + "." + identity.instance_id;
 }
 
 }
 
 PluginManager::PluginManager(
-  std::string base_package,
+  std::shared_ptr<uran_plugin_api::PluginLoader> loader,
   std::shared_ptr<CapabilityRegistry> capability_registry)
-: base_package_(std::move(base_package)),
-  capability_registry_(std::move(capability_registry)),
-  loader_(base_package_, "uran_plugin_api::Plugin")
+: capability_registry_(std::move(capability_registry)),
+  loader_(std::move(loader))
 {
-  if (base_package_.empty()) {
-    throw std::invalid_argument("插件基类包名不能为空");
+  if (!loader_) {
+    throw std::invalid_argument("插件加载后端不能为空");
   }
 }
 
@@ -106,7 +99,7 @@ Status PluginManager::load(
 {
   const auto & identity = specification.identity;
   const auto & requested = specification.descriptor;
-  if (!valid_identity_segment(identity.instance_id)) {
+  if (identity.instance_id == "uran_runtime" || !valid_identity_segment(identity.instance_id)) {
     return Status::failure("插件实例标识不合法: " + identity.instance_id);
   }
   if (!valid_identity_segment(identity.device_id)) {
@@ -136,14 +129,9 @@ Status PluginManager::load(
   std::shared_ptr<uran_plugin_api::PluginContext> plugin_context;
   std::shared_ptr<uran_plugin_api::Plugin> instance;
   try {
-    // pluginlib 类加载器的内部状态不作为并发契约，创建过程显式串行化。
+    // 加载后端的创建操作串行化。
     std::lock_guard<std::mutex> loader_lock(loader_mutex_);
-    instance = loader_.createSharedInstance(requested.class_type);
-  } catch (const pluginlib::PluginlibException & exception) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    entries_.erase(identity.instance_id);
-    return Status::failure(
-      "加载插件类失败: " + requested.class_type + "，原因: " + exception.what());
+    instance = loader_->create(requested.class_type);
   } catch (const std::exception & exception) {
     std::lock_guard<std::mutex> lock(mutex_);
     entries_.erase(identity.instance_id);
@@ -191,7 +179,8 @@ Status PluginManager::load(
     entries_.erase(identity.instance_id);
     return Status::failure("插件类型与配置不一致: " + identity.instance_id);
   }
-  if (!requested.api_version.empty() && actual.api_version != requested.api_version) {
+  if (actual.api_version != uran_plugin_api::kPluginApiVersion ||
+    (!requested.api_version.empty() && actual.api_version != requested.api_version)) {
     std::lock_guard<std::mutex> lock(mutex_);
     entries_.erase(identity.instance_id);
     return Status::failure("插件 API 版本不兼容: " + identity.instance_id);
@@ -205,27 +194,43 @@ Status PluginManager::load(
   }
 
   try {
-    const auto node = context.node();
-    if (!node) {
-      std::lock_guard<std::mutex> lock(mutex_);
-      entries_.erase(identity.instance_id);
-      return Status::failure(
-        "配置插件时 Runtime 节点已经失效: " + identity.instance_id);
-    }
     auto state_access = std::make_shared<ScopedStateAccess>(
       context.state_access(), identity.instance_id);
-    const auto instance_namespace = specification.ros_namespace.empty() ?
-      build_instance_namespace(context.instance_namespace(), identity) :
-      specification.ros_namespace;
+    const auto instance_scope = specification.route_scope.empty() ?
+      build_route_scope(context.route_scope(), identity) :
+      specification.route_scope;
+    auto services = std::make_shared<ScopedPlatformServices>(context.platform(), identity.instance_id, false);
+    std::shared_ptr<uran_plugin_api::MessageAccess> messages;
+    if (context.messages()) {
+      messages = std::make_shared<ScopedMessageAccess>(context.messages(), identity, services);
+    }
     plugin_context = std::make_shared<uran_plugin_api::PluginContext>(
-      node, std::move(state_access), context.route_resolver(),
-      identity, instance_namespace);
+      services,
+      std::move(state_access), context.route_resolver(),
+      identity, instance_scope, messages, context.capabilities());
   } catch (const std::exception & exception) {
     std::lock_guard<std::mutex> lock(mutex_);
     entries_.erase(identity.instance_id);
     return Status::failure(
       "创建插件受控上下文失败: " + identity.instance_id +
       "，原因: " + exception.what());
+  }
+
+  try {
+    const auto supported = context.platform()->interfaces();
+    for (const auto & required : instance->capabilities().required_interfaces) {
+      if (std::find(supported.begin(), supported.end(), required) == supported.end()) {
+        throw std::runtime_error("缺少平台接口: " + required);
+      }
+    }
+  } catch (const std::exception & exception) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    entries_.erase(identity.instance_id);
+    return Status::failure(exception.what());
+  } catch (...) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    entries_.erase(identity.instance_id);
+    return Status::failure("读取所需平台接口失败");
   }
 
   Status configured;
@@ -238,16 +243,19 @@ Status PluginManager::load(
   }
 
   if (!configured.ok) {
+    std::dynamic_pointer_cast<ScopedPlatformServices>(plugin_context->platform())->revoke();
     try {
       static_cast<void>(instance->cleanup());
     } catch (...) {
     }
+    std::dynamic_pointer_cast<ScopedStateAccess>(plugin_context->state_access())->revoke();
     std::lock_guard<std::mutex> lock(mutex_);
     entries_.erase(identity.instance_id);
     return Status::failure(
       "配置插件实例失败: " + identity.instance_id + "，原因: " + configured.message);
   }
 
+  std::dynamic_pointer_cast<ScopedPlatformServices>(plugin_context->platform())->revoke();
   bool cancelled = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -265,6 +273,7 @@ Status PluginManager::load(
     }
   }
   if (cancelled) {
+    std::dynamic_pointer_cast<ScopedPlatformServices>(plugin_context->platform())->revoke();
     try {
       static_cast<void>(instance->cleanup());
     } catch (...) {
@@ -279,6 +288,7 @@ Status PluginManager::activate(const std::string & instance_id)
   std::shared_ptr<uran_plugin_api::Plugin> instance;
   PluginIdentity identity;
   int priority = 0;
+  std::shared_ptr<ScopedPlatformServices> services;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     auto * entry = find_entry(instance_id);
@@ -295,7 +305,9 @@ Status PluginManager::activate(const std::string & instance_id)
     instance = entry->instance;
     identity = entry->specification.identity;
     priority = entry->specification.priority;
+    services = std::dynamic_pointer_cast<ScopedPlatformServices>(entry->context->platform());
   }
+  services->enable();
 
   Status result;
   try {
@@ -304,6 +316,11 @@ Status PluginManager::activate(const std::string & instance_id)
     result = Status::failure(std::string("插件 activate 抛出异常: ") + exception.what());
   } catch (...) {
     result = Status::failure("插件 activate 抛出未知异常");
+  }
+
+  if (!result.ok) {
+    services->revoke();
+    try {static_cast<void>(instance->deactivate());} catch (...) {}
   }
 
   if (result.ok && capability_registry_) {
@@ -318,6 +335,7 @@ Status PluginManager::activate(const std::string & instance_id)
       result = Status::failure("读取或注册插件能力时发生未知异常");
     }
     if (!result.ok) {
+      services->revoke();
       // 能力登记失败时插件不能进入可用状态，尽力恢复到停止状态。
       try {
         static_cast<void>(instance->deactivate());
@@ -341,6 +359,7 @@ Status PluginManager::activate(const std::string & instance_id)
 Status PluginManager::deactivate(const std::string & instance_id)
 {
   std::shared_ptr<uran_plugin_api::Plugin> instance;
+  std::shared_ptr<ScopedPlatformServices> services;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     auto * entry = find_entry(instance_id);
@@ -358,7 +377,9 @@ Status PluginManager::deactivate(const std::string & instance_id)
     }
     entry->transitioning = true;
     instance = entry->instance;
+    services = std::dynamic_pointer_cast<ScopedPlatformServices>(entry->context->platform());
   }
+  services->revoke();
 
   Status result;
   try {
@@ -406,7 +427,7 @@ Status PluginManager::unload(const std::string & instance_id)
     instance = entry->instance;
     entry->transitioning = true;
   }
-  static_cast<void>(plugin_context);
+  std::dynamic_pointer_cast<ScopedPlatformServices>(plugin_context->platform())->revoke();
 
   if (state == PluginState::active || state == PluginState::error) {
     Status stopped;
@@ -455,6 +476,7 @@ Status PluginManager::unload(const std::string & instance_id)
   if (capability_registry_) {
     static_cast<void>(capability_registry_->unregister_instance(instance_id));
   }
+  std::dynamic_pointer_cast<ScopedStateAccess>(plugin_context->state_access())->revoke();
   entries_.erase(instance_id);
   return Status::success("插件实例已卸载: " + instance_id);
 }
@@ -615,6 +637,13 @@ bool PluginManager::has(const std::string & instance_id) const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return entries_.find(instance_id) != entries_.end();
+}
+
+std::shared_ptr<uran_plugin_api::Plugin> PluginManager::instance(const std::string & instance_id) const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto * entry = find_entry(instance_id);
+  return entry ? entry->instance : nullptr;
 }
 
 PluginManager::Entry * PluginManager::find_entry(const std::string & instance_id)

@@ -1,0 +1,10 @@
+<package format="3">
+  <name>uran_platform_native</name>
+  <version>2.0.0</version>
+  <description>Platform-independent URAN framework component</description>
+  <maintainer email="dev@example.com">URAN Dev</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>cmake</buildtool_depend>
+  <depend>uran_core_framework</depend>
+  <export><build_type>cmake</build_type></export>
+</package>

@@ -1,3 +1,0 @@
-# 用于验证 Runtime 可以在不加载插件时独立启动。
-default_device_id: robot_001
-plugins: []

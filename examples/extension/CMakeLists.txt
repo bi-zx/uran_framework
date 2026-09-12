@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(uran_example_extension LANGUAGES CXX)
+find_package(uran_plugin_api 2 REQUIRED CONFIG)
+add_library(example_extension SHARED extension.cpp)
+target_compile_features(example_extension PRIVATE cxx_std_17)
+target_link_libraries(example_extension PRIVATE uran::uran_plugin_api)
+install(TARGETS example_extension LIBRARY DESTINATION lib)
+install(FILES plugin.json DESTINATION .)

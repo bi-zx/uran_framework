@@ -1,0 +1,3 @@
+# Empty assembly starts the independent framework without any business plugin.
+default_device_id: robot_001
+plugins: []

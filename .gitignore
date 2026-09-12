@@ -1,6 +1,9 @@
-build/
-install/
-log/
+/build*/
+/install*/
+/log*/
+/.deps/
+__pycache__/
+*.pyc
 .vscode/
 .idea/
 compile_commands.json

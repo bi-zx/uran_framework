@@ -1,84 +1,69 @@
 #include "uran_core_framework/message_router.hpp"
-
+#include <algorithm>
 #include <exception>
-#include <utility>
 
 namespace uran_core_framework
 {
-
 Status MessageRouter::register_handler(
-  const std::string & message_type,
-  Handler handler,
-  std::size_t & registration_id)
+  const std::string & type, Handler handler, std::size_t & id)
 {
-  registration_id = 0U;
-  if (message_type.empty()) {
-    return Status::failure("消息类型不能为空");
-  }
-  if (!handler) {
-    return Status::failure("消息处理器不能为空: " + message_type);
-  }
-
+  if (!handler) {id = 0; return Status::failure("empty handler");}
+  return register_handler(MessageRoute{type, {}, {}, 0},
+    [handler](const auto & message) {handler(message); return Status::success();}, id);
+}
+Status MessageRouter::register_handler(
+  const MessageRoute & route, ResultHandler handler, std::size_t & id)
+{
+  id = 0;
+  if (route.message_type.empty() || !handler) {return Status::failure("invalid message route");}
   std::lock_guard<std::mutex> lock(mutex_);
-  if (handlers_.find(message_type) != handlers_.end()) {
-    return Status::failure("消息类型已经注册处理器: " + message_type);
+  for (const auto & item : handlers_) {
+    if (item.second.route.message_type == route.message_type &&
+      item.second.route.provider == route.provider)
+    {return Status::failure("duplicate message route");}
   }
-  registration_id = next_registration_id_++;
-  handlers_.emplace(message_type, Entry{registration_id, std::move(handler)});
+  id = next_id_++;
+  handlers_.emplace(id, Entry{route, std::move(handler)});
   return Status::success();
 }
-
-void MessageRouter::unregister_handler(const std::size_t registration_id)
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  for (auto iterator = handlers_.begin(); iterator != handlers_.end(); ++iterator) {
-    if (iterator->second.id == registration_id) {
-      handlers_.erase(iterator);
-      return;
-    }
-  }
-}
-
+void MessageRouter::unregister_handler(std::size_t id)
+{std::lock_guard<std::mutex> lock(mutex_); handlers_.erase(id);}
 void MessageRouter::set_unhandled_handler(Handler handler)
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  unhandled_handler_ = std::move(handler);
-}
-
+{std::lock_guard<std::mutex> lock(mutex_); unhandled_handler_ = std::move(handler);}
 Status MessageRouter::route(const uran_plugin_api::DownlinkEnvelope & message) const
 {
-  if (message.message_type.empty()) {
-    return Status::failure("下行消息类型不能为空");
-  }
-
-  Handler handler;
-  bool matched = false;
+  if (message.message_type.empty()) {return Status::failure("message type is required");}
+  ResultHandler selected;
+  Handler fallback;
+  const auto & target = message.target;
+  const bool targeted = !target.device_id.empty() || !target.component_id.empty() ||
+    !target.instance_id.empty() || !target.capability_id.empty();
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto iterator = handlers_.find(message.message_type);
-    if (iterator != handlers_.end()) {
-      handler = iterator->second.handler;
-      matched = true;
-    } else {
-      handler = unhandled_handler_;
+    const Entry * best = nullptr;
+    for (const auto & item : handlers_) {
+      const auto & entry = item.second;
+      const auto & route = entry.route;
+      if (route.message_type != message.message_type) {continue;}
+      if (!targeted && !route.provider.instance_id.empty()) {continue;}
+      if (targeted && route.provider.instance_id.empty()) {continue;}
+      if (!target.device_id.empty() && target.device_id != route.provider.device_id) {continue;}
+      if (!target.component_id.empty() && target.component_id != route.provider.component_id) {continue;}
+      if (!target.instance_id.empty() && target.instance_id != route.provider.instance_id) {continue;}
+      if (!target.capability_id.empty() && std::find(route.capabilities.begin(),
+        route.capabilities.end(), target.capability_id) == route.capabilities.end()) {continue;}
+      if (!best || route.priority > best->route.priority ||
+        (route.priority == best->route.priority &&
+        route.provider.instance_id < best->route.provider.instance_id)) {best = &entry;}
     }
+    if (best) {selected = best->handler;}
+    fallback = unhandled_handler_;
   }
-
-  if (!handler) {
-    return Status::failure("没有可处理该类型下行消息的处理器: " + message.message_type);
-  }
-
   try {
-    handler(message);
-  } catch (const std::exception & exception) {
-    return Status::failure(
-      "下行消息处理器抛出异常: " + message.message_type + ", 原因: " + exception.what());
-  } catch (...) {
-    return Status::failure("下行消息处理器抛出未知异常: " + message.message_type);
-  }
-
-  return Status::success(
-    matched ? "下行消息已路由" : "下行消息已交给未匹配处理器");
+    if (selected) {return selected(message);}
+    if (fallback) {fallback(message); return Status::success("unhandled message forwarded");}
+    return Status::failure("no matching message handler");
+  } catch (const std::exception & exception) {return Status::failure(exception.what());}
+  catch (...) {return Status::failure("message handler threw an unknown exception");}
 }
-
 }

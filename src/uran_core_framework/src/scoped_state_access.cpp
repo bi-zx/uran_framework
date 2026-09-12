@@ -22,6 +22,8 @@ ScopedStateAccess::ScopedStateAccess(
 uran_plugin_api::Status ScopedStateAccess::register_field(
   const uran_plugin_api::StateFieldSpec & specification)
 {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (revoked_) {return uran_plugin_api::Status::failure("state access revoked");}
   auto owned_specification = specification;
   if (owned_specification.owner.empty()) {
     owned_specification.owner = owner_;
@@ -30,18 +32,24 @@ uran_plugin_api::Status ScopedStateAccess::register_field(
     return uran_plugin_api::Status::failure(
       "插件不能注册其他所有者的状态字段: " + specification.name);
   }
-  return upstream_->register_field(owned_specification);
+  const auto result = upstream_->register_field(owned_specification);
+  if (result.ok) {fields_.insert(specification.name);}
+  return result;
 }
 
 uran_plugin_api::Status ScopedStateAccess::unregister_field(
   const std::string & field_name,
   const std::string & source)
 {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (revoked_) {return uran_plugin_api::Status::failure("state access revoked");}
   if (source != owner_) {
     return uran_plugin_api::Status::failure(
       "插件只能注销自身运行实例拥有的状态字段: " + field_name);
   }
-  return upstream_->unregister_field(field_name, owner_);
+  const auto result = upstream_->unregister_field(field_name, owner_);
+  if (result.ok) {fields_.erase(field_name);}
+  return result;
 }
 
 uran_plugin_api::Status ScopedStateAccess::set(
@@ -50,11 +58,15 @@ uran_plugin_api::Status ScopedStateAccess::set(
   const std::string & source,
   const bool persistent)
 {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (revoked_) {return uran_plugin_api::Status::failure("state access revoked");}
   if (source != owner_) {
     return uran_plugin_api::Status::failure(
       "插件状态写入来源必须与运行实例标识一致: " + field_name);
   }
-  return upstream_->set(field_name, value_json, owner_, persistent);
+  const auto result = upstream_->set(field_name, value_json, owner_, persistent);
+  if (result.ok) {fields_.insert(field_name);}
+  return result;
 }
 
 bool ScopedStateAccess::get(
@@ -77,6 +89,18 @@ std::string ScopedStateAccess::snapshot_json() const
 const std::string & ScopedStateAccess::owner() const noexcept
 {
   return owner_;
+}
+
+ScopedStateAccess::~ScopedStateAccess() {revoke();}
+
+void ScopedStateAccess::revoke() noexcept
+{
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  revoked_ = true;
+  for (const auto & field : fields_) {
+    try {static_cast<void>(upstream_->unregister_field(field, owner_));} catch (...) {}
+  }
+  fields_.clear();
 }
 
 }

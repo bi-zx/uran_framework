@@ -3,6 +3,8 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <set>
+#include <mutex>
 
 #include "uran_plugin_api/runtime_access.hpp"
 
@@ -24,6 +26,8 @@ public:
   ScopedStateAccess(
     std::shared_ptr<uran_plugin_api::StateAccess> upstream,
     std::string owner);
+  ~ScopedStateAccess() override;
+  void revoke() noexcept;
 
   uran_plugin_api::Status register_field(
     const uran_plugin_api::StateFieldSpec & specification) override;
@@ -46,6 +50,9 @@ public:
 private:
   std::shared_ptr<uran_plugin_api::StateAccess> upstream_;
   std::string owner_;
+  std::recursive_mutex mutex_;
+  std::set<std::string> fields_;
+  bool revoked_{false};
 };
 
 }

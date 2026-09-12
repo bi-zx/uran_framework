@@ -1,44 +1,39 @@
 #pragma once
 
-#include <cstddef>
 #include <functional>
 #include <map>
 #include <mutex>
 #include <string>
-
+#include <vector>
 #include "uran_core_framework/types.hpp"
-#include "uran_core_framework/visibility_control.hpp"
 #include "uran_plugin_api/protocol_plugin.hpp"
 
 namespace uran_core_framework
 {
+struct MessageRoute
+{
+  std::string message_type;
+  PluginIdentity provider;
+  std::vector<std::string> capabilities;
+  int priority{0};
+};
 
-/** @brief 按消息类型分发协议下行消息。 */
-class URAN_CORE_FRAMEWORK_PUBLIC MessageRouter final
+/** Synchronous semantic routing; Runtime invokes it only on its serial executor. */
+class MessageRouter final
 {
 public:
   using Handler = std::function<void(const uran_plugin_api::DownlinkEnvelope &)>;
-
-  Status register_handler(
-    const std::string & message_type,
-    Handler handler,
-    std::size_t & registration_id);
-  void unregister_handler(std::size_t registration_id);
-  void set_unhandled_handler(Handler handler);
-
-  Status route(const uran_plugin_api::DownlinkEnvelope & message) const;
-
+  using ResultHandler = std::function<Status(const uran_plugin_api::DownlinkEnvelope &)>;
+  Status register_handler(const std::string &, Handler, std::size_t &);
+  Status register_handler(const MessageRoute &, ResultHandler, std::size_t &);
+  void unregister_handler(std::size_t);
+  void set_unhandled_handler(Handler);
+  Status route(const uran_plugin_api::DownlinkEnvelope &) const;
 private:
-  struct Entry
-  {
-    std::size_t id{0};
-    Handler handler;
-  };
-
+  struct Entry {MessageRoute route; ResultHandler handler;};
   mutable std::mutex mutex_;
-  std::map<std::string, Entry> handlers_;
+  std::map<std::size_t, Entry> handlers_;
   Handler unhandled_handler_;
-  std::size_t next_registration_id_{1};
+  std::size_t next_id_{1};
 };
-
 }

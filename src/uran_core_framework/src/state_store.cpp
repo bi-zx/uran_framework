@@ -5,6 +5,7 @@
 #include <limits>
 #include <regex>
 #include <utility>
+#include <stdexcept>
 
 #include <nlohmann/json.hpp>
 
@@ -26,9 +27,25 @@ std::string trim_copy(const std::string & value)
 
 }
 
-StateStore::StateStore(const bool allow_extension_fields)
-: allow_extension_fields_(allow_extension_fields)
+StateStore::StateStore(const bool allow_extension_fields,
+  std::shared_ptr<uran_plugin_api::StateStorage> storage,
+  std::function<std::chrono::system_clock::time_point()> clock)
+: allow_extension_fields_(allow_extension_fields), storage_(std::move(storage)), clock_(std::move(clock))
 {
+  if (!clock_) {throw std::invalid_argument("state clock is required");}
+  if (storage_) {
+    for (const auto & record : storage_->load()) {
+      const auto & spec = record.specification;
+      const auto & value = record.value;
+      if (!valid_field_name(spec.name) || spec.owner.empty() || !supported_type(spec.type) ||
+        value.source != spec.owner || !value.persistent || !valid_json_value(value.value_json) ||
+        !valid_value_for_type(value.value_json, spec.type) || durable_.count(spec.name))
+      {throw std::runtime_error("invalid persistent state record: " + spec.name);}
+      durable_.emplace(spec.name, record);
+      specifications_.emplace(spec.name, spec);
+      values_.emplace(spec.name, value);
+    }
+  }
 }
 
 Status StateStore::register_field(const StateFieldSpec & specification)
@@ -62,6 +79,14 @@ Status StateStore::register_field(const StateFieldSpec & specification)
         "状态字段不能以不同定义重复注册: " + specification.name);
     }
     return Status::success("状态字段已经注册");
+  }
+  const auto saved = durable_.find(specification.name);
+  if (saved != durable_.end()) {
+    const auto & previous = saved->second.specification;
+    if (previous.owner != specification.owner || previous.type != specification.type ||
+      previous.unit != specification.unit || previous.persistent != specification.persistent)
+    {return Status::failure("persistent state definition/owner differs: " + specification.name);}
+    values_[specification.name] = saved->second.value;
   }
   specifications_.emplace(specification.name, specification);
   return Status::success();
@@ -112,38 +137,46 @@ Status StateStore::set(
   {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     auto specification = specifications_.find(field_name);
-    if (specification == specifications_.end()) {
-      if (!allow_extension_fields_) {
-        return Status::failure("状态字段尚未注册: " + field_name);
-      }
-      // 扩展字段首次写入时即绑定所有者，后续不能由其他模块接管
-      StateFieldSpec extension_specification;
-      extension_specification.name = field_name;
-      extension_specification.type = "any";
-      extension_specification.owner = source;
-      extension_specification.persistent = persistent;
-      specification = specifications_.emplace(
-        field_name, std::move(extension_specification)).first;
+    StateFieldSpec candidate;
+    const bool extension = specification == specifications_.end();
+    if (extension) {
+      if (!allow_extension_fields_) {return Status::failure("状态字段尚未注册: " + field_name);}
+      const auto saved = durable_.find(field_name);
+      candidate = saved != durable_.end() ? saved->second.specification :
+        StateFieldSpec{field_name, "any", "", source, persistent};
+    } else {candidate = specification->second;}
+    if (candidate.owner != source) {return Status::failure("状态字段写入来源与所有者不一致: " + field_name);}
+    if (!valid_value_for_type(value_json, candidate.type)) {
+      return Status::failure("状态值与声明类型不匹配: " + field_name + "，类型=" + candidate.type);
     }
-    if (specification->second.owner != source) {
-      return Status::failure(
-        "状态字段写入来源与所有者不一致: " + field_name);
-    }
-    if (!valid_value_for_type(value_json, specification->second.type)) {
-      return Status::failure(
-        "状态值与声明类型不匹配: " + field_name +
-        "，类型=" + specification->second.type);
-    }
-
-    state_value.value_json = trim_copy(value_json);
+    state_value.value_json = nlohmann::json::parse(value_json).dump();
     state_value.source = source;
-    state_value.updated_at = std::chrono::system_clock::now();
-    state_value.persistent = persistent || specification->second.persistent;
+    state_value.updated_at = clock_();
+    const auto old_value = values_.find(field_name);
+    const auto old_durable = durable_.find(field_name);
+    state_value.persistent = persistent || candidate.persistent ||
+      old_durable != durable_.end();
+    if (state_value.persistent) {
+      if (!storage_) {return Status::failure("no persistent state backend configured");}
+      auto saved = durable_;
+      saved[field_name] = {candidate, state_value};
+      std::vector<uran_plugin_api::StoredState> records;
+      for (const auto & item : saved) {records.push_back(item.second);}
+      Status stored;
+      try {stored = storage_->save(records);}
+      catch (const std::exception & exception) {stored = Status::failure(exception.what());}
+      catch (...) {stored = Status::failure("state persistence failed");}
+      if (!stored.ok) {return stored;}
+      durable_ = std::move(saved);
+    }
+    const bool changed = old_value == values_.end() ||
+      old_value->second.value_json != state_value.value_json ||
+      old_value->second.persistent != state_value.persistent;
+    if (extension) {specifications_.emplace(field_name, candidate);}
     values_[field_name] = state_value;
-
-    callbacks.reserve(callbacks_.size());
-    for (const auto & item : callbacks_) {
-      callbacks.push_back(item.second);
+    if (changed) {
+      callbacks.reserve(callbacks_.size());
+      for (const auto & item : callbacks_) {callbacks.push_back(item.second);}
     }
   }
 
@@ -253,12 +286,11 @@ bool StateStore::valid_value_for_type(
     return value.is_string();
   }
   if (declared_type == "int" || declared_type == "int64") {
-    if (value.is_number_integer()) {
-      return true;
+    if (value.is_number_unsigned()) {
+      return value.get<std::uint64_t>() <=
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
     }
-    return value.is_number_unsigned() &&
-           value.get<std::uint64_t>() <=
-           static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    return value.is_number_integer();
   }
   if (declared_type == "uint" || declared_type == "uint64") {
     return value.is_number_unsigned() ||

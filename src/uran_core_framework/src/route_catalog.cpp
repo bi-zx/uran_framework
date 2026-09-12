@@ -1,13 +1,27 @@
 #include "uran_core_framework/route_catalog.hpp"
 
 #include <utility>
+#include <regex>
+#include <stdexcept>
 
 namespace uran_core_framework
 {
+namespace {
+bool semantic_name(const std::string & name)
+{
+  static const std::regex pattern(R"(^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$)");
+  return std::regex_match(name, pattern);
+}
+}
 
 RouteCatalog::RouteCatalog(std::map<std::string, std::string> routes)
 : routes_(std::move(routes))
 {
+  for (const auto & item : routes_) {
+    if (!semantic_name(item.first) || !semantic_name(item.second)) {
+      throw std::invalid_argument("route aliases must name semantic messages");
+    }
+  }
 }
 
 Status RouteCatalog::load_file(const std::string & path)
@@ -42,8 +56,8 @@ Status RouteCatalog::load_node(const YAML::Node & root)
         return Status::failure("路由值必须是字符串: " + name);
       }
       const auto route = item.second.as<std::string>();
-      if (name.empty() || route.empty()) {
-        return Status::failure("路由名称和值不能为空");
+      if (!semantic_name(name) || !semantic_name(route)) {
+        return Status::failure("路由名称和值必须是点分语义标识");
       }
       parsed.emplace(name, route);
     }
@@ -58,8 +72,8 @@ Status RouteCatalog::load_node(const YAML::Node & root)
 
 Status RouteCatalog::set(const std::string & route_name, const std::string & route)
 {
-  if (route_name.empty() || route.empty()) {
-    return Status::failure("路由名称和值不能为空");
+  if (!semantic_name(route_name) || !semantic_name(route)) {
+    return Status::failure("路由名称和值必须是点分语义标识");
   }
 
   std::lock_guard<std::mutex> lock(mutex_);

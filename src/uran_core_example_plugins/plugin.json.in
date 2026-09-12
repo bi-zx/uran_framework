@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "package": "uran_loopback",
+  "version": "2.0.0",
+  "api_version": "2.0",
+  "plugins": [{
+    "class_type": "uran_core_example_plugins/LoopbackProtocolPlugin",
+    "library": "../../../../@CMAKE_INSTALL_LIBDIR@/@CMAKE_SHARED_LIBRARY_PREFIX@uran_core_example_plugins@CMAKE_SHARED_LIBRARY_SUFFIX@"
+  }]
+}

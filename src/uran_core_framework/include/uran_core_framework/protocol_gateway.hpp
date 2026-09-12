@@ -45,6 +45,7 @@ public:
     const std::string & preferred_instance = {});
   std::vector<std::string> protocol_instance_ids() const;
   std::string primary_instance_id() const;
+  bool current_source(const PluginIdentity &, std::uint64_t generation) const;
 
 private:
   struct Entry
@@ -52,11 +53,13 @@ private:
     PluginIdentity identity;
     std::shared_ptr<uran_plugin_api::ProtocolPlugin> protocol;
     int priority{0};
+    std::uint64_t generation{0};
   };
 
   void select_default_primary_locked();
   void dispatch_downlink(
     const PluginIdentity & identity,
+    std::uint64_t generation,
     const uran_plugin_api::DownlinkEnvelope & message) const;
 
   mutable std::mutex mutex_;
@@ -64,6 +67,7 @@ private:
   std::string primary_instance_id_;
   bool primary_explicit_{false};
   DownlinkHandler downlink_handler_;
+  std::uint64_t next_generation_{1};
 };
 
 } 

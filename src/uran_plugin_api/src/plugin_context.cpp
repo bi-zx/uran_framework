@@ -7,19 +7,22 @@ namespace uran_plugin_api
 {
 
 PluginContext::PluginContext(
-  rclcpp::Node::SharedPtr node,
+  std::shared_ptr<PlatformServices> platform,
   std::shared_ptr<StateAccess> state_access,
   std::shared_ptr<RouteResolver> route_resolver,
   PluginIdentity identity,
-  std::string instance_namespace)
-: node_(std::move(node)),
+  std::string route_scope,
+  std::shared_ptr<MessageAccess> messages,
+  std::shared_ptr<CapabilityAccess> capabilities)
+: platform_(std::move(platform)),
   state_access_(std::move(state_access)),
   route_resolver_(std::move(route_resolver)),
   identity_(std::move(identity)),
-  instance_namespace_(std::move(instance_namespace))
+  route_scope_(std::move(route_scope)),
+  messages_(std::move(messages)), capabilities_(std::move(capabilities))
 {
-  if (!node_) {
-    throw std::invalid_argument("PluginContext 的 node 不能为空");
+  if (!platform_) {
+    throw std::invalid_argument("PluginContext 的平台服务不能为空");
   }
   if (!state_access_) {
     throw std::invalid_argument("PluginContext 的 state_access 不能为空");
@@ -34,10 +37,13 @@ PluginContext::PluginContext(
   }
 }
 
-rclcpp::Node::SharedPtr PluginContext::node() const noexcept
+std::shared_ptr<PlatformServices> PluginContext::platform() const noexcept
 {
-  return node_.lock();
+  return platform_;
 }
+
+std::shared_ptr<MessageAccess> PluginContext::messages() const noexcept {return messages_;}
+std::shared_ptr<CapabilityAccess> PluginContext::capabilities() const noexcept {return capabilities_;}
 
 std::shared_ptr<StateAccess> PluginContext::state_access() const noexcept
 {
@@ -69,9 +75,9 @@ const std::string & PluginContext::component_id() const noexcept
   return identity_.component_id;
 }
 
-const std::string & PluginContext::instance_namespace() const noexcept
+const std::string & PluginContext::route_scope() const noexcept
 {
-  return instance_namespace_;
+  return route_scope_;
 }
 
 }

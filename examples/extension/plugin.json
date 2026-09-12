@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "package": "example_extension",
+  "version": "1.0.0",
+  "api_version": "2.0",
+  "plugins": [{"class_type": "example/Extension", "library": "lib/libexample_extension.so"}]
+}

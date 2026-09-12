@@ -4,7 +4,7 @@
 #include <exception>
 #include <utility>
 
-#include <pluginlib/class_list_macros.hpp>
+#include "uran_plugin_api/plugin_loader.hpp"
 
 namespace uran_core_example_plugins
 {
@@ -14,7 +14,7 @@ uran_plugin_api::PluginDescriptor LoopbackProtocolPlugin::descriptor() const
   return uran_plugin_api::PluginDescriptor{
     "protocol",
     "0.1.0",
-    "1.0",
+    uran_plugin_api::kPluginApiVersion,
     "uran_core_example_plugins/LoopbackProtocolPlugin"};
 }
 
@@ -39,12 +39,7 @@ uran_plugin_api::Status LoopbackProtocolPlugin::configure(
     return uran_plugin_api::Status::failure("回环通道名称不能为空");
   }
 
-  const auto node = context.node();
-  if (!node) {
-    ++error_count_;
-    return uran_plugin_api::Status::failure("Runtime 节点已经失效");
-  }
-  logger_ = node->get_logger();
+  platform_ = context.platform();
   identity_ = context.identity();
   connected_state_field_ = "plugin." + identity_.instance_id + ".connected";
   state_access_ = context.state_access();
@@ -74,9 +69,6 @@ uran_plugin_api::Status LoopbackProtocolPlugin::configure(
     return initialized;
   }
   configured_ = true;
-  RCLCPP_INFO(
-    logger_, "回环协议实例配置完成，实例=%s，通道=%s",
-    identity_.instance_id.c_str(), channel_name_.c_str());
   return uran_plugin_api::Status::success();
 }
 
@@ -133,7 +125,7 @@ uran_plugin_api::PluginHealth LoopbackProtocolPlugin::health() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   uran_plugin_api::PluginHealth result;
-  result.checked_at = std::chrono::system_clock::now();
+  result.checked_at = platform_ ? platform_->system_now() : std::chrono::system_clock::time_point{};
   result.error_count = error_count_;
   if (connected_) {
     result.level = uran_plugin_api::PluginHealth::Level::healthy;
@@ -184,7 +176,6 @@ uran_plugin_api::Status LoopbackProtocolPlugin::connect()
     ++error_count_;
     return updated;
   }
-  RCLCPP_INFO(logger_, "回环协议实例已连接: %s", instance_id.c_str());
   return uran_plugin_api::Status::success();
 }
 
@@ -209,7 +200,6 @@ uran_plugin_api::Status LoopbackProtocolPlugin::disconnect()
       return updated;
     }
   }
-  RCLCPP_INFO(logger_, "回环协议实例已断开: %s", instance_id.c_str());
   return uran_plugin_api::Status::success();
 }
 
@@ -229,7 +219,7 @@ uran_plugin_api::Status LoopbackProtocolPlugin::publish(
   // 外部回调必须在插件锁外执行，允许接收方安全地回调插件其他方法。
   if (callback) {
     callback(uran_plugin_api::DownlinkEnvelope{
-      message.message_type, message.payload, message.correlation_id});
+      message.message_type, message.payload, message.correlation_id, {}, {}, 0});
   }
   return uran_plugin_api::Status::success();
 }
@@ -243,6 +233,12 @@ void LoopbackProtocolPlugin::set_downlink_callback(
 
 }
 
-PLUGINLIB_EXPORT_CLASS(
-  uran_core_example_plugins::LoopbackProtocolPlugin,
-  uran_plugin_api::Plugin)
+extern "C" URAN_PLUGIN_API_EXPORT const uran_plugin_api::NativePluginExport * uran_plugin_export_v2()
+{
+  static const uran_plugin_api::NativePluginExport exported{
+    uran_plugin_api::kNativePluginAbiVersion,
+    "uran_core_example_plugins/LoopbackProtocolPlugin",
+    []() -> uran_plugin_api::Plugin * {return new uran_core_example_plugins::LoopbackProtocolPlugin;},
+    [](uran_plugin_api::Plugin * plugin) noexcept {delete plugin;}};
+  return &exported;
+}

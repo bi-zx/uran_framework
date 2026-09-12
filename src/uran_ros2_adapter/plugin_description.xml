@@ -1,0 +1,7 @@
+<library path="uran_ros2_plugin_exports">
+  <class name="uran_core_example_plugins/LoopbackProtocolPlugin"
+    type="uran_core_example_plugins::LoopbackProtocolPlugin"
+    base_class_type="uran_plugin_api::Plugin">
+    <description>ROS loader export of the platform-independent loopback example.</description>
+  </class>
+</library>

@@ -13,7 +13,7 @@
 namespace uran_core_framework
 {
 
-/** @brief 保存逻辑路由名到 ROS 2 通信端点的线程安全映射。 */
+/** @brief 保存逻辑路由别名到消息语义标识的线程安全映射；平台端点由适配器管理。 */
 class URAN_CORE_FRAMEWORK_PUBLIC RouteCatalog final
   : public uran_plugin_api::RouteResolver
 {

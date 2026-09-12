@@ -9,12 +9,21 @@
 namespace uran_plugin_api
 {
 
+struct MessageTarget
+{
+  std::string device_id;
+  std::string component_id;
+  std::string instance_id;
+  std::string capability_id;
+};
+
 struct UplinkEnvelope
 {
   std::string message_type;
   std::string payload;
   std::string correlation_id;
   bool urgent{false};
+  PluginIdentity source;
 };
 
 struct DownlinkEnvelope
@@ -22,6 +31,10 @@ struct DownlinkEnvelope
   std::string message_type;
   std::string payload;
   std::string correlation_id;
+  // Filled by the gateway, never trusted from the transport payload.
+  PluginIdentity source;
+  MessageTarget target;
+  std::uint64_t source_generation{0};
 };
 
 using DownlinkCallback = std::function<void(const DownlinkEnvelope &)>;

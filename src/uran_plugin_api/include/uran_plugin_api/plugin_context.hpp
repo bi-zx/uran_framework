@@ -3,7 +3,7 @@
 #include <memory>
 #include <string>
 
-#include <rclcpp/rclcpp.hpp>
+#include "uran_plugin_api/platform_services.hpp"
 
 #include "uran_plugin_api/runtime_access.hpp"
 #include "uran_plugin_api/types.hpp"
@@ -21,27 +21,33 @@ class URAN_PLUGIN_API_PUBLIC PluginContext final
 {
 public:
   PluginContext(
-    rclcpp::Node::SharedPtr node,
+    std::shared_ptr<PlatformServices> platform,
     std::shared_ptr<StateAccess> state_access,
     std::shared_ptr<RouteResolver> route_resolver,
     PluginIdentity identity,
-    std::string instance_namespace);
+    std::string route_scope,
+    std::shared_ptr<MessageAccess> messages = {},
+    std::shared_ptr<CapabilityAccess> capabilities = {});
 
-  rclcpp::Node::SharedPtr node() const noexcept;
+  std::shared_ptr<PlatformServices> platform() const noexcept;
   std::shared_ptr<StateAccess> state_access() const noexcept;
   std::shared_ptr<RouteResolver> route_resolver() const noexcept;
   const PluginIdentity & identity() const noexcept;
   const std::string & instance_id() const noexcept;
   const std::string & device_id() const noexcept;
   const std::string & component_id() const noexcept;
-  const std::string & instance_namespace() const noexcept;
+  const std::string & route_scope() const noexcept;
+  std::shared_ptr<MessageAccess> messages() const noexcept;
+  std::shared_ptr<CapabilityAccess> capabilities() const noexcept;
 
 private:
-  std::weak_ptr<rclcpp::Node> node_;
+  std::shared_ptr<PlatformServices> platform_;
   std::shared_ptr<StateAccess> state_access_;
   std::shared_ptr<RouteResolver> route_resolver_;
   PluginIdentity identity_;
-  std::string instance_namespace_;
+  std::string route_scope_;
+  std::shared_ptr<MessageAccess> messages_;
+  std::shared_ptr<CapabilityAccess> capabilities_;
 };
 
 }

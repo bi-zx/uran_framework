@@ -2,7 +2,7 @@
 #include <string>
 
 #include <gtest/gtest.h>
-#include <rclcpp/rclcpp.hpp>
+#include "uran_platform_native/native_platform.hpp"
 #include <yaml-cpp/yaml.h>
 
 #include "uran_core_example_plugins/loopback_protocol_plugin.hpp"
@@ -14,23 +14,11 @@
 namespace uran_core_example_plugins
 {
 
-class LoopbackMultiInstanceTest : public ::testing::Test
-{
-protected:
-  static void SetUpTestSuite()
-  {
-    rclcpp::init(0, nullptr);
-  }
-
-  static void TearDownTestSuite()
-  {
-    rclcpp::shutdown();
-  }
-};
+class LoopbackMultiInstanceTest : public ::testing::Test {};
 
 TEST_F(LoopbackMultiInstanceTest, KeepsConfigurationLifecycleAndStateIndependent)
 {
-  auto node = std::make_shared<rclcpp::Node>("loopback_multi_instance_test");
+  auto platform = std::make_shared<uran_platform_native::NativePlatform>();
   auto state_store = std::make_shared<uran_core_framework::StateStore>(true);
   auto route_catalog = std::make_shared<uran_core_framework::RouteCatalog>();
 
@@ -43,9 +31,9 @@ TEST_F(LoopbackMultiInstanceTest, KeepsConfigurationLifecycleAndStateIndependent
   auto backup_state = std::make_shared<uran_core_framework::ScopedStateAccess>(
     state_store, backup_identity.instance_id);
   uran_plugin_api::PluginContext primary_context(
-    node, primary_state, route_catalog, primary_identity, "/robot_001/communication");
+    platform, primary_state, route_catalog, primary_identity, "/robot_001/communication");
   uran_plugin_api::PluginContext backup_context(
-    node, backup_state, route_catalog, backup_identity, "/robot_001/communication");
+    platform, backup_state, route_catalog, backup_identity, "/robot_001/communication");
 
   LoopbackProtocolPlugin primary;
   LoopbackProtocolPlugin backup;

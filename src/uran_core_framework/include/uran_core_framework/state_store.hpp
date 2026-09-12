@@ -12,6 +12,7 @@
 #include "uran_core_framework/types.hpp"
 #include "uran_core_framework/visibility_control.hpp"
 #include "uran_plugin_api/runtime_access.hpp"
+#include "uran_plugin_api/state_storage.hpp"
 
 namespace uran_core_framework
 {
@@ -28,7 +29,9 @@ public:
   using ChangeCallback = std::function<void(
       const std::string &, const StateValue &)>;
 
-  explicit StateStore(bool allow_extension_fields = true);
+  explicit StateStore(bool allow_extension_fields = true,
+    std::shared_ptr<uran_plugin_api::StateStorage> storage = {},
+    std::function<std::chrono::system_clock::time_point()> clock = std::chrono::system_clock::now);
   ~StateStore() = default;
 
   StateStore(const StateStore &) = delete;
@@ -61,6 +64,9 @@ private:
     const std::string & declared_type);
 
   bool allow_extension_fields_{true};
+  std::shared_ptr<uran_plugin_api::StateStorage> storage_;
+  std::function<std::chrono::system_clock::time_point()> clock_;
+  std::map<std::string, uran_plugin_api::StoredState> durable_;
   mutable std::shared_mutex mutex_;
   std::map<std::string, StateFieldSpec> specifications_;
   std::map<std::string, StateValue> values_;

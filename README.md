@@ -1,86 +1,131 @@
-# URAN Core Framework
+# URAN Framework 2
 
-当前目录是 URAN 的 C++/ROS 2 原型，用于验证插件生命周期、多实例、状态隔离、能力注册和多协议装配。当前实现仍依赖 `rclcpp`、`pluginlib` 和 ROS 2 构建体系，不代表最终的平台无关架构。
+`uran_rebuild` 是独立的 C++17 框架，配套 Python 插件包工具。核心通过接口接入平台服务、动态加载器与状态存储；ROS 2 是可选适配层。默认装配为空，可以不安装 ROS、不接入设备或云平台直接运行。
 
-目标架构由平台无关的 `UranRuntime`、领域服务和通用插件 API 组成，ROS 2 通过独立的 RuntimeHost、Platform Services 和 Loader 后端接入。未来接入其他机器人操作系统时，应新增或替换平台适配器，而不修改设备模型、领域语义和通用插件生命周期。
+当前提供插件生命周期和多实例装配、设备/组件身份、能力发现、通用消息路由、多协议选择、状态管理和持久化、运行时管理，以及插件包下载、源码编译、安装与应用。仓库中的回环协议和 `example.echo` 仅验证框架机制，没有接入运控、图传、导航、按键映射、任务规划、模型或 Agent 业务。
 
-- `uran_plugin_api`：当前原型的插件模型和基类，不依赖 Runtime 实现，但仍含 ROS 2 类型，后续需要提取平台无关接口。
-- `uran_core_framework`：当前原型的状态空间、能力注册表、路由目录、消息路由、协议网关、插件管理器和 RuntimeNode。
-- `uran_core_example_plugins`：一个最小的协议插件，用于验证 `pluginlib` 接口和生命周期。
-- `uran_bringup`：集中提供系统配置和启动装配。
-
-## 目录
-
-```text
-uran_rebuild/
-├── docs/
-├── scripts/
-├── README.md
-└── src/
-    ├── uran_core_framework/
-    ├── uran_core_example_plugins/
-    ├── uran_plugin_api/
-    └── uran_bringup/
+```mermaid
+flowchart TB
+  N[Linux 原生宿主] --> R[UranRuntime]
+  ROS[可选 ROS 2 宿主] --> R
+  R --> P[Plugin 公共接口]
+  R --> S[状态 / 能力 / 消息 / 配置 / 生命周期]
+  R --> A[PlatformServices / PluginLoader / StateStorage]
+  A --> NATIVE[原生适配实现]
+  A --> ROSA[ROS 2 适配实现]
+  TOOL[Python 插件包工具] --> PKG[下载 / 校验 / 编译 / 安装]
+  PKG --> N
+  P --> EXT[独立开发的插件动态库]
 ```
 
-## 设计边界
+## 构建与测试
 
-当前原型已经验证：
+Linux 原生版本需要 C++17 编译器、CMake（建议 3.20+）、yaml-cpp、nlohmann_json 3.10+。测试额外需要 GoogleTest 和 Python 3.9+；插件包工具只使用 Python 标准库。Ubuntu 可安装 `build-essential cmake libyaml-cpp-dev nlohmann-json3-dev libgtest-dev python3`。未找到 nlohmann_json 时，默认下载固定版本并校验 SHA-256；离线构建请预装依赖并设 `-DURAN_FETCH_DEPENDENCIES=OFF`。
 
-- 统一的 C++ 插件生命周期。
-- 插件实现描述与运行实例身份分离。
-- PluginContext 提供实例、设备、组件身份和受控 Runtime 能力。
-- 同一插件实现类可创建多个独立实例。
-- 插件状态写入和注销权限与运行实例标识绑定。
-- 线程安全的状态存储。
-- 按设备、组件和能力组织的能力注册表。
-- 配置驱动的路由目录。
-- 协议插件抽象。
-- 多协议实例选择、优先级、上行回退和带来源身份的下行消息路由。
-- 基于 pluginlib 的插件发现、加载和管理。
-- 基于 `rclcpp` 的 RuntimeNode 骨架。
-
-这些能力后续需要拆分为平台无关 Runtime 与 ROS 2 Adapter。通用核心不能暴露 `rclcpp::Node`、ROS 消息或 pluginlib 类型；ROS Namespace、Topic、Service、Action 和 Executor 等平台概念由 ROS 2 Adapter 管理。
-
-具体 ROS 消息和服务接口应在 ROS 2 适配接口设计阶段单独确定。当前 Runtime 示例节点使用 `std_msgs/msg/String` 作为占位数据通道，不代表最终的 URAN 领域模型或业务接口。
-
-当前代码已经把设备、组件、插件实现、插件实例和能力拆分：同一个实现类可创建多个独立实例，一个实例可提供多项能力，一个设备可同时装配多条协议通道。真实协议连接、正式领域接口和具体机器人适配仍需在此框架上继续实现。详见 [插件化架构说明](docs/插件化架构说明.md) 和 [目前框架说明](docs/目前框架说明.md)。
-
-## 当前 ROS 2 原型构建
-
-```bash
-source /opt/ros/humble/setup.bash
-cd uran_rebuild
-rosdep install --from-paths src --ignore-src -r -y
-colcon build --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
-source install/setup.bash
-```
-
-也可以使用项目脚本完成依赖安装、构建和测试：
+在本目录执行：
 
 ```bash
 bash scripts/build.sh
 bash scripts/test.sh
 ```
 
-运行框架节点：
+脚本使用普通 CMake 构建并安装至 `install/`，不自动安装系统依赖。可通过 `URAN_BUILD_DIR`、`URAN_INSTALL_PREFIX`、`URAN_BUILD_JOBS` 覆盖目录与并发数，也可直接调用：
 
 ```bash
-ros2 run uran_core_framework uran_runtime_node
+cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_INSTALL_PREFIX="$PWD/install"
+cmake --build build --parallel 2
+cmake --install build
+ctest --test-dir build --output-on-failure
 ```
 
-使用 bringup 加载示例协议插件：
+仅构建可复用核心和通用示例，不构建 Linux 原生适配器：
 
 ```bash
+cmake -S . -B build-core -DURAN_BUILD_NATIVE=OFF -DURAN_BUILD_ROS2=OFF
+cmake --build build-core --parallel 2
+ctest --test-dir build-core --output-on-failure
+```
+
+交付 SDK 时可设 `-DBUILD_TESTING=OFF`，不再要求 GoogleTest/Python 测试环境。原生宿主及包工具当前面向 Linux；其他操作系统需要提供相应平台适配器。
+
+## 运行空框架
+
+```bash
+./install/bin/uran_runtime --config config/runtime.yaml \
+  --state-file /tmp/uran-state.json --control-socket /tmp/uran.sock
+```
+
+在另一终端管理：
+
+```bash
+python3 scripts/uran_plugin.py request --socket /tmp/uran.sock '{"op":"status"}'
+python3 scripts/uran_plugin.py request --socket /tmp/uran.sock '{"op":"snapshot"}'
+python3 scripts/uran_plugin.py request --socket /tmp/uran.sock '{"op":"shutdown"}'
+```
+
+不传 `--control-socket` 时，宿主从标准输入逐行读取 JSON 命令，输入结束后退出。Socket 模式保持运行，可通过管理命令或 SIGINT/SIGTERM 停止。
+
+运行主备回环协议验证链路：
+
+```bash
+./install/bin/uran_runtime --config config/loopback.yaml \
+  --manifest install/share/uran_framework/plugins/loopback/plugin.json \
+  --control-socket /tmp/uran.sock
+```
+
+```bash
+python3 scripts/uran_plugin.py request --socket /tmp/uran.sock \
+  '{"op":"publish","message_type":"framework.echo","payload":{"value":1},"correlation_id":"demo"}'
+python3 scripts/uran_plugin.py request --socket /tmp/uran.sock \
+  '{"op":"deactivate","instance_id":"protocol_primary"}'
+```
+
+回环下行事件输出到宿主标准输出，带协议实例来源。停用主实例后会选择可用的备用协议。
+
+## 下载、编译并应用扩展
+
+先运行上面的空框架，然后：
+
+```bash
+python3 scripts/uran_plugin.py pack examples/extension --output /tmp/extension.tar.gz
+python3 scripts/uran_plugin.py install /tmp/extension.tar.gz \
+  --store /tmp/uran-plugins --sdk-prefix "$PWD/install" \
+  --runtime-socket /tmp/uran.sock --instance-id echo_extension
+python3 scripts/uran_plugin.py request --socket /tmp/uran.sock \
+  '{"op":"dispatch","message_type":"example.echo","payload":{"value":42},"target":{"instance_id":"echo_extension"}}'
+python3 scripts/uran_plugin.py request --socket /tmp/uran.sock '{"op":"snapshot"}'
+```
+
+快照中会出现 `plugin.echo_extension.last_message`。将安装命令中的本地路径换为 HTTPS URL 并提供 `--sha256`，即可走下载、验证、构建与应用流程。安装目录中的同一包版本不可覆盖；重复试验应使用新 store 或新版本。详细格式和升级语义见[插件包与二次开发](docs/插件包与二次开发.md)。
+
+## 可选 ROS 2 适配
+
+需要已安装 ROS 2 Humble 及 `ament_cmake`、`pluginlib`、`rclcpp`、`std_msgs`、`std_srvs`，使用独立构建目录：
+
+```bash
+URAN_BUILD_DIR="$PWD/build-ros" URAN_INSTALL_PREFIX="$PWD/install-ros" \
+  bash scripts/build.sh --ros2
+source /opt/ros/humble/setup.bash
+export AMENT_PREFIX_PATH="$PWD/install-ros:${AMENT_PREFIX_PATH:-}"
 ros2 launch uran_bringup uran_framework.launch.py
 ```
 
-示例插件会将占位上行消息回送到占位下行通道，可用于检查基础链路：
+普通 CMake 安装不生成 colcon 工作区的顶层 `setup.bash`，因此这里显式设置 `AMENT_PREFIX_PATH`。节点已从 `uran_core_framework` 移至 `uran_ros2_adapter`。
+
+安装后的 ROS 冒烟验证（需 `rclpy`）：
 
 ```bash
-ros2 topic echo /uran/runtime/downlink
-ros2 topic pub --once /uran/runtime/uplink std_msgs/msg/String \
-  "{data: '{\"message_type\":\"framework.echo\",\"payload\":{\"value\":1}}'}"
+source /opt/ros/humble/setup.bash
+/usr/bin/python3 tests/test_ros2_host.py "$PWD/install-ros"
 ```
 
-运行时是否加载插件由参数 `plugin_config` 指向的 YAML 文件决定。bringup 示例会用同一个回环协议实现类创建主、备两个实例，用于验证实例身份、状态隔离和协议选择；回环协议不代表系统已经接入真实云端。
+该验证检查 pluginlib 加载、心跳、上下行来源、在线停用主协议、备用协议和状态服务。具体 ROS 通道见[目前框架说明](docs/目前框架说明.md)。
+
+## 文档与迁移
+
+- [目前框架说明](docs/目前框架说明.md)：现有功能、管理接口、验证范围及研发计划对应关系。
+- [插件化架构说明](docs/插件化架构说明.md)：分层、生命周期、线程、状态与消息契约。
+- [插件包与二次开发](docs/插件包与二次开发.md)：外部 SDK、包格式、下载应用及平台扩展。
+
+这是 API 2.0 / 原生 ABI 2 的不兼容升级。旧插件需要移除 `PluginContext` 中的 ROS Node 访问，改用公共服务接口，更新版本并重新编译；原 ROS 插件 XML 导出移至适配包。`ros_namespace` 改为不带平台含义的 `route_scope`，ROS Topic 路径只由 ROS 适配层配置。

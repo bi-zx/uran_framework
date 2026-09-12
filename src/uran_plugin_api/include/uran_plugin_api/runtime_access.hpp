@@ -2,12 +2,35 @@
 
 #include <map>
 #include <string>
+#include <functional>
 
 #include "uran_plugin_api/types.hpp"
 #include "uran_plugin_api/visibility_control.hpp"
 
 namespace uran_plugin_api
 {
+
+struct UplinkEnvelope;
+class MessageAccess
+{
+public:
+  virtual ~MessageAccess() = default;
+  virtual Status publish(const UplinkEnvelope &, const std::string & preferred = {}) = 0;
+};
+
+struct CapabilityProvider
+{
+  std::string capability_id;
+  PluginIdentity identity;
+  int priority{0};
+};
+class CapabilityAccess
+{
+public:
+  virtual ~CapabilityAccess() = default;
+  virtual std::vector<CapabilityProvider> providers(const std::string & capability_id,
+    const std::string & device_id = {}, const std::string & component_id = {}) const = 0;
+};
 
 /** @brief 插件可使用的状态访问接口。 */
 class URAN_PLUGIN_API_PUBLIC StateAccess

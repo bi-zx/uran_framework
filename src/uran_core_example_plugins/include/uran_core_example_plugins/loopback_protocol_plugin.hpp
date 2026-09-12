@@ -41,7 +41,7 @@ public:
 
 private:
   mutable std::mutex mutex_;
-  rclcpp::Logger logger_{rclcpp::get_logger("loopback_protocol")};
+  std::shared_ptr<uran_plugin_api::PlatformServices> platform_;
   std::shared_ptr<uran_plugin_api::StateAccess> state_access_;
   uran_plugin_api::DownlinkCallback downlink_callback_;
   uran_plugin_api::PluginIdentity identity_;

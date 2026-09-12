@@ -1,23 +1,10 @@
-<?xml version="1.0"?>
-<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>uran_core_example_plugins</name>
-  <version>0.1.0</version>
-  <description>Examples demonstrating how to extend the URAN core framework</description>
+  <version>2.0.0</version>
+  <description>Platform-independent URAN framework component</description>
   <maintainer email="dev@example.com">URAN Dev</maintainer>
   <license>Apache-2.0</license>
-
-  <buildtool_depend>ament_cmake</buildtool_depend>
-
-  <depend>pluginlib</depend>
-  <depend>rclcpp</depend>
+  <buildtool_depend>cmake</buildtool_depend>
   <depend>uran_plugin_api</depend>
-  <depend>yaml_cpp_vendor</depend>
-
-  <test_depend>ament_cmake_gtest</test_depend>
-  <test_depend>uran_core_framework</test_depend>
-
-  <export>
-    <build_type>ament_cmake</build_type>
-  </export>
+  <export><build_type>cmake</build_type></export>
 </package>

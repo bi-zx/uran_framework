@@ -1,8 +1,0 @@
-<library path="uran_core_example_plugins">
-  <class
-    name="uran_core_example_plugins/LoopbackProtocolPlugin"
-    type="uran_core_example_plugins::LoopbackProtocolPlugin"
-    base_class_type="uran_plugin_api::Plugin">
-    <description>本地回环插件</description>
-  </class>
-</library>

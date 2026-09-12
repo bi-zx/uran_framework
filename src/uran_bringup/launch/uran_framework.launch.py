@@ -11,7 +11,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         Node(
-            package="uran_core_framework",
+            package="uran_ros2_adapter",
             executable="uran_runtime_node",
             name="uran_runtime",
             output="screen",

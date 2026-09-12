@@ -86,6 +86,8 @@ public:
     return publish_count_;
   }
 
+  uran_plugin_api::DownlinkCallback callback() const {return callback_;}
+
 private:
   bool publish_success_{false};
   std::size_t publish_count_{0U};
@@ -166,6 +168,43 @@ TEST(ProtocolGateway, TreatsSameImplementationAsIndependentInstances)
       "protocol_backup").ok);
   EXPECT_EQ(primary->publish_count(), 0U);
   EXPECT_EQ(backup->publish_count(), 1U);
+}
+
+TEST(ProtocolGateway, ScopedUplinkCannotFallBackToAnotherDevice)
+{
+  auto gateway = std::make_shared<ProtocolGateway>();
+  auto local = std::make_shared<FakeProtocol>(false);
+  auto other = std::make_shared<FakeProtocol>(true);
+  ASSERT_TRUE(gateway->register_protocol({"local", "robot_a", "protocol"}, local, 10).ok);
+  ASSERT_TRUE(gateway->register_protocol({"other", "robot_b", "protocol"}, other, 100).ok);
+  uran_plugin_api::UplinkEnvelope message{"event", "{}", "", false};
+  message.source = {"extension", "robot_a", "extension"};
+  EXPECT_FALSE(gateway->publish(message, "other").ok);
+  EXPECT_EQ(local->publish_count(), 1U);
+  EXPECT_EQ(other->publish_count(), 0U);
+}
+
+TEST(ProtocolGateway, PreviousGenerationCannotInjectAfterReactivation)
+{
+  auto gateway = std::make_shared<ProtocolGateway>();
+  auto protocol = std::make_shared<FakeProtocol>(true);
+  const PluginIdentity identity{"protocol", "robot_a", "communication"};
+  ASSERT_TRUE(gateway->register_protocol(identity, protocol).ok);
+  const auto obsolete = protocol->callback();
+  ASSERT_TRUE(gateway->unregister_protocol(identity.instance_id).ok);
+  ASSERT_TRUE(gateway->register_protocol(identity, protocol).ok);
+  int received = 0;
+  gateway->set_downlink_handler([&](const auto &, const auto & message) {
+    ++received;
+    EXPECT_EQ(message.source, identity);
+    EXPECT_TRUE(gateway->current_source(message.source, message.source_generation));
+  });
+  uran_plugin_api::DownlinkEnvelope forged{"event", "{}", ""};
+  forged.source = {"forged", "robot_b", "other"};
+  obsolete(forged);
+  EXPECT_EQ(received, 0);
+  protocol->callback()(forged);
+  EXPECT_EQ(received, 1);
 }
 
 }

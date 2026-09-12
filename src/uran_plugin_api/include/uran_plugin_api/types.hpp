@@ -98,7 +98,7 @@ struct PluginSpec
 {
   PluginIdentity identity;
   PluginDescriptor descriptor;
-  std::string ros_namespace;
+  std::string route_scope;
   bool enabled{true};
   int priority{0};
   std::string config_file;
