@@ -9,7 +9,7 @@ function(uran_library target)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
   endif()
-  set_target_properties(${target} PROPERTIES VERSION 2.0.0 SOVERSION 2 INSTALL_RPATH "$ORIGIN")
+  set_target_properties(${target} PROPERTIES VERSION 2.1.0 SOVERSION 3 INSTALL_RPATH "$ORIGIN")
   install(TARGETS ${target} EXPORT ${target}Targets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -19,7 +19,7 @@ function(uran_library target)
   set(config "${CMAKE_CURRENT_BINARY_DIR}/${target}Config.cmake")
   file(WRITE "${config}" "include(CMakeFindDependencyMacro)\n${ARGN}\ninclude(\"\${CMAKE_CURRENT_LIST_DIR}/${target}Targets.cmake\")\n")
   write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/${target}ConfigVersion.cmake"
-    VERSION 2.0.0 COMPATIBILITY SameMajorVersion)
+    VERSION 2.1.0 COMPATIBILITY SameMajorVersion)
   install(FILES "${config}" "${CMAKE_CURRENT_BINARY_DIR}/${target}ConfigVersion.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${target})
 endfunction()

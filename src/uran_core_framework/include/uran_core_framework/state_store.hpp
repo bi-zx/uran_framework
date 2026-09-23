@@ -17,13 +17,16 @@
 namespace uran_core_framework
 {
 
+struct ObservationRegistry;
+
 /**
  * @brief 维护字段定义、所有权和 JSON 状态值的线程安全状态空间。
  *
  * 写入在锁内原子提交，变化回调复制后在锁外执行。
  */
 class URAN_CORE_FRAMEWORK_PUBLIC StateStore final
-  : public uran_plugin_api::StateAccess
+  : public uran_plugin_api::StateAccess,
+    public uran_plugin_api::StateObserverAccess
 {
 public:
   using ChangeCallback = std::function<void(
@@ -32,7 +35,7 @@ public:
   explicit StateStore(bool allow_extension_fields = true,
     std::shared_ptr<uran_plugin_api::StateStorage> storage = {},
     std::function<std::chrono::system_clock::time_point()> clock = std::chrono::system_clock::now);
-  ~StateStore() = default;
+  ~StateStore();
 
   StateStore(const StateStore &) = delete;
   StateStore & operator=(const StateStore &) = delete;
@@ -54,6 +57,9 @@ public:
 
   std::size_t subscribe(ChangeCallback callback);
   void unsubscribe(std::size_t subscription_id);
+  std::shared_ptr<uran_plugin_api::StateObservation> observe(
+    const std::string & field_prefix,
+    uran_plugin_api::StateChangeCallback callback) override;
 
 private:
   static bool valid_field_name(const std::string & field_name);
@@ -70,8 +76,7 @@ private:
   mutable std::shared_mutex mutex_;
   std::map<std::string, StateFieldSpec> specifications_;
   std::map<std::string, StateValue> values_;
-  std::map<std::size_t, ChangeCallback> callbacks_;
-  std::size_t next_subscription_id_{1};
+  std::shared_ptr<ObservationRegistry> observations_;
 };
 
 }

@@ -40,7 +40,7 @@ struct DownlinkEnvelope
 using DownlinkCallback = std::function<void(const DownlinkEnvelope &)>;
 
 /** @brief 外部通信协议的传输边界。 */
-class URAN_PLUGIN_API_PUBLIC ProtocolPlugin : public Plugin
+class URAN_PLUGIN_API_PUBLIC ProtocolPlugin : public virtual Plugin
 {
 public:
   ~ProtocolPlugin() override = default;

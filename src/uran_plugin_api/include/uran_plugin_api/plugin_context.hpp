@@ -28,6 +28,16 @@ public:
     std::string route_scope,
     std::shared_ptr<MessageAccess> messages = {},
     std::shared_ptr<CapabilityAccess> capabilities = {});
+  PluginContext(
+    std::shared_ptr<PlatformServices> platform,
+    std::shared_ptr<StateAccess> state_access,
+    std::shared_ptr<RouteResolver> route_resolver,
+    PluginIdentity identity,
+    std::string route_scope,
+    std::shared_ptr<MessageAccess> messages,
+    std::shared_ptr<CapabilityAccess> capabilities,
+    std::shared_ptr<LocalMessageAccess> local_messages,
+    std::shared_ptr<StateObserverAccess> state_observer = {});
 
   std::shared_ptr<PlatformServices> platform() const noexcept;
   std::shared_ptr<StateAccess> state_access() const noexcept;
@@ -39,6 +49,8 @@ public:
   const std::string & route_scope() const noexcept;
   std::shared_ptr<MessageAccess> messages() const noexcept;
   std::shared_ptr<CapabilityAccess> capabilities() const noexcept;
+  std::shared_ptr<LocalMessageAccess> local_messages() const noexcept;
+  std::shared_ptr<StateObserverAccess> state_observer() const noexcept;
 
 private:
   std::shared_ptr<PlatformServices> platform_;
@@ -48,6 +60,8 @@ private:
   std::string route_scope_;
   std::shared_ptr<MessageAccess> messages_;
   std::shared_ptr<CapabilityAccess> capabilities_;
+  std::shared_ptr<LocalMessageAccess> local_messages_;
+  std::shared_ptr<StateObserverAccess> state_observer_;
 };
 
 }

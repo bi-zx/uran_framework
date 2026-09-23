@@ -1,18 +1,16 @@
 # URAN Framework 2
 
-`uran_rebuild` 是独立的 C++17 框架，配套 Python 插件包工具。核心通过接口接入平台服务、动态加载器与状态存储；ROS 2 是可选适配层。默认装配为空，可以不安装 ROS、不接入设备或云平台直接运行。
+`uran_framework` 是独立的 C++17 框架，配套 Python 插件包工具。核心通过接口接入平台服务、动态加载器与状态存储。默认装配为空，可以不安装 ROS、不接入设备或云平台直接运行。ROS 2 已迁入独立的 `uran_ros2_adapter` 仓库，通过安装后的框架 SDK 构建。
 
 当前提供插件生命周期和多实例装配、设备/组件身份、能力发现、通用消息路由、多协议选择、状态管理和持久化、运行时管理，以及插件包下载、源码编译、安装与应用。仓库中的回环协议和 `example.echo` 仅验证框架机制，没有接入运控、图传、导航、按键映射、任务规划、模型或 Agent 业务。
 
 ```mermaid
 flowchart TB
   N[Linux 原生宿主] --> R[UranRuntime]
-  ROS[可选 ROS 2 宿主] --> R
   R --> P[Plugin 公共接口]
   R --> S[状态 / 能力 / 消息 / 配置 / 生命周期]
   R --> A[PlatformServices / PluginLoader / StateStorage]
   A --> NATIVE[原生适配实现]
-  A --> ROSA[ROS 2 适配实现]
   TOOL[Python 插件包工具] --> PKG[下载 / 校验 / 编译 / 安装]
   PKG --> N
   P --> EXT[独立开发的插件动态库]
@@ -42,7 +40,7 @@ ctest --test-dir build --output-on-failure
 仅构建可复用核心和通用示例，不构建 Linux 原生适配器：
 
 ```bash
-cmake -S . -B build-core -DURAN_BUILD_NATIVE=OFF -DURAN_BUILD_ROS2=OFF
+cmake -S . -B build-core -DURAN_BUILD_NATIVE=OFF
 cmake --build build-core --parallel 2
 ctest --test-dir build-core --output-on-failure
 ```
@@ -99,31 +97,13 @@ python3 scripts/uran_plugin.py request --socket /tmp/uran.sock '{"op":"snapshot"
 
 快照中会出现 `plugin.echo_extension.last_message`。将安装命令中的本地路径换为 HTTPS URL 并提供 `--sha256`，即可走下载、验证、构建与应用流程。安装目录中的同一包版本不可覆盖；重复试验应使用新 store 或新版本。详细格式和升级语义见[插件包与二次开发](docs/插件包与二次开发.md)。
 
-## 可选 ROS 2 适配
+## ROS 2 适配
 
-需要已安装 ROS 2 Humble 及 `ament_cmake`、`pluginlib`、`rclcpp`、`std_msgs`、`std_srvs`，使用独立构建目录：
-
-```bash
-URAN_BUILD_DIR="$PWD/build-ros" URAN_INSTALL_PREFIX="$PWD/install-ros" \
-  bash scripts/build.sh --ros2
-source /opt/ros/humble/setup.bash
-export AMENT_PREFIX_PATH="$PWD/install-ros:${AMENT_PREFIX_PATH:-}"
-ros2 launch uran_bringup uran_framework.launch.py
-```
-
-普通 CMake 安装不生成 colcon 工作区的顶层 `setup.bash`，因此这里显式设置 `AMENT_PREFIX_PATH`。节点已从 `uran_core_framework` 移至 `uran_ros2_adapter`。
-
-安装后的 ROS 冒烟验证（需 `rclpy`）：
-
-```bash
-source /opt/ros/humble/setup.bash
-/usr/bin/python3 tests/test_ros2_host.py "$PWD/install-ros"
-```
-
-该验证检查 pluginlib 加载、心跳、上下行来源、在线停用主协议、备用协议和状态服务。具体 ROS 通道见[目前框架说明](docs/目前框架说明.md)。
+ROS 2 宿主、pluginlib Loader、launch 和 ROS 冒烟测试由独立的 `uran_ros2_adapter` 仓库交付。该仓库只通过安装后的 `uran_plugin_api`、`uran_core_framework` 和 `uran_platform_native` CMake 包消费本仓库 SDK；本仓库不查找 ROS，也不包含 ROS package。
 
 ## 文档与迁移
 
+- [多仓库拆分与完整迁移方案](docs/多仓库拆分与完整迁移方案.md)：六个独立仓库、第三方依赖归属、旧分支迁移、部署与验收；包含后续仓库的本地落位约定。
 - [目前框架说明](docs/目前框架说明.md)：现有功能、管理接口、验证范围及研发计划对应关系。
 - [插件化架构说明](docs/插件化架构说明.md)：分层、生命周期、线程、状态与消息契约。
 - [插件包与二次开发](docs/插件包与二次开发.md)：外部 SDK、包格式、下载应用及平台扩展。

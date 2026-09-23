@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(uran_plugin_api VERSION 2.0.0 LANGUAGES CXX)
+project(uran_plugin_api VERSION 2.1.0 LANGUAGES CXX)
 include(../../cmake/Package.cmake)
 find_package(yaml-cpp REQUIRED)
 add_library(${PROJECT_NAME} SHARED src/plugin_context.cpp src/types.cpp)

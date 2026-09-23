@@ -1,5 +1,8 @@
 #include <filesystem>
 #include <fstream>
+#include <atomic>
+#include <future>
+#include <thread>
 #include <gtest/gtest.h>
 #include "uran_core_framework/state_store.hpp"
 #include "uran_platform_native/file_state_storage.hpp"
@@ -82,4 +85,29 @@ TEST(StatePersistence, NativeFileRoundtripAndCorruptionIsReported)
   auto storage = std::make_shared<uran_platform_native::FileStateStorage>(path.string());
   EXPECT_THROW(StateStore(true, storage), std::exception);
   std::filesystem::remove_all(directory);
+}
+
+TEST(StateObservation, CancelWaitsForConcurrentCallbackAndHandleOutlivesStore)
+{
+  auto state = std::make_unique<StateStore>();
+  std::promise<void> entered;
+  std::promise<void> release;
+  auto released = release.get_future().share();
+  std::atomic<int> calls{0};
+  auto observation = state->observe("ext.", [&](const auto &, const auto &) {
+    ++calls;
+    entered.set_value();
+    released.wait();
+  });
+  std::thread writer([&] {EXPECT_TRUE(state->set("ext.value", "1", "owner").ok);});
+  entered.get_future().wait();
+  auto cancelling = std::async(std::launch::async, [&] {observation->cancel();});
+  EXPECT_EQ(cancelling.wait_for(std::chrono::milliseconds(30)), std::future_status::timeout);
+  release.set_value();
+  EXPECT_EQ(cancelling.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+  writer.join();
+  EXPECT_TRUE(state->set("ext.value", "2", "owner").ok);
+  EXPECT_EQ(calls, 1);
+  state.reset();
+  EXPECT_NO_THROW(observation->cancel());
 }

@@ -5,13 +5,13 @@ plugins:
     component_id: communication
     plugin_type: protocol
     class_type: uran_core_example_plugins/LoopbackProtocolPlugin
-    api_version: "2.0"
+    api_version: "2.1"
     priority: 100
     config: {channel: primary}
   - instance_id: protocol_backup
     component_id: communication
     plugin_type: protocol
     class_type: uran_core_example_plugins/LoopbackProtocolPlugin
-    api_version: "2.0"
+    api_version: "2.1"
     priority: 50
     config: {channel: backup}

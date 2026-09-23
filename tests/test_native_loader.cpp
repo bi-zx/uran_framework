@@ -11,7 +11,7 @@ TEST(NativeLoader, RetainsLibraryAfterLoaderDestruction)
     plugin = loader.create("uran_core_example_plugins/LoopbackProtocolPlugin");
     EXPECT_THROW(loader.create("missing/class"), std::runtime_error);
   }
-  EXPECT_EQ(plugin->descriptor().api_version, "2.0");
+  EXPECT_EQ(plugin->descriptor().api_version, uran_plugin_api::kPluginApiVersion);
   EXPECT_NE(std::dynamic_pointer_cast<uran_plugin_api::ProtocolPlugin>(plugin), nullptr);
   plugin.reset();
 }

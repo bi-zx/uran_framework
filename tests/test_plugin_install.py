@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix="uran-install-test-") as temporary:
     prefix = source / "prefix"
     prefix.mkdir(parents=True)
     shutil.copyfile(library, prefix / "loopback.so")
-    metadata = {"schema_version": 1, "package": "test_loopback", "version": "1.0.0", "api_version": "2.0"}
+    metadata = {"schema_version": 1, "package": "test_loopback", "version": "1.0.0", "api_version": "2.1"}
     (source / "uran-package.json").write_text(json.dumps(metadata | {"build": {"kind": "prebuilt"}}))
     (prefix / "plugin.json").write_text(json.dumps(metadata | {"plugins": [{
         "class_type": "uran_core_example_plugins/LoopbackProtocolPlugin", "library": "loopback.so"}]}))

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(uran_platform_native VERSION 2.0.0 LANGUAGES CXX)
+project(uran_platform_native VERSION 2.1.0 LANGUAGES CXX)
 include(../../cmake/Package.cmake)
 if(NOT TARGET uran::uran_core_framework)
   find_package(uran_core_framework 2 REQUIRED CONFIG)

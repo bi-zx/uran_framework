@@ -1,9 +1,0 @@
-<package format="3">
-  <name>uran_ros2_adapter</name><version>2.0.0</version>
-  <description>Optional ROS 2 host and pluginlib loader for URAN.</description>
-  <maintainer email="dev@example.com">URAN Dev</maintainer><license>Apache-2.0</license>
-  <buildtool_depend>ament_cmake</buildtool_depend>
-  <depend>pluginlib</depend><depend>rclcpp</depend><depend>std_msgs</depend><depend>std_srvs</depend>
-  <depend>uran_platform_native</depend><depend>uran_core_example_plugins</depend>
-  <export><build_type>ament_cmake</build_type></export>
-</package>

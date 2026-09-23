@@ -2,6 +2,7 @@
 
 #include <mutex>
 #include <future>
+#include <functional>
 #include "uran_plugin_api/platform_services.hpp"
 #include "uran_plugin_api/runtime_access.hpp"
 #include "uran_plugin_api/protocol_plugin.hpp"
@@ -65,5 +66,57 @@ private:
   std::shared_ptr<uran_plugin_api::MessageAccess> upstream_;
   uran_plugin_api::PluginIdentity identity_;
   std::shared_ptr<ScopedPlatformServices> scope_;
+};
+
+class ScopedLocalMessageAccess final : public uran_plugin_api::LocalMessageAccess
+{
+public:
+  ScopedLocalMessageAccess(std::shared_ptr<uran_plugin_api::LocalMessageAccess> upstream,
+    uran_plugin_api::PluginIdentity identity, std::shared_ptr<ScopedPlatformServices> scope)
+  : upstream_(std::move(upstream)), identity_(std::move(identity)), scope_(std::move(scope)) {}
+  uran_plugin_api::Status dispatch(const uran_plugin_api::DownlinkEnvelope & message) override
+  {
+    if (!scope_->enabled()) {return uran_plugin_api::Status::failure("instance is not active");}
+    auto identified = message;
+    identified.source = identity_;
+    identified.source_generation = 0;
+    auto invoke = [upstream = upstream_, scope = scope_, identified] {
+      return scope->enabled() ? upstream->dispatch(identified) :
+        uran_plugin_api::Status::failure("instance is not active");
+    };
+    if (scope_->on_executor_thread()) {return invoke();}
+    try {
+      auto task = std::make_shared<std::packaged_task<uran_plugin_api::Status()>>(invoke);
+      auto result = task->get_future();
+      const auto pending = scope_->post([task] {(*task)();});
+      task.reset();
+      return result.get();
+    } catch (const std::exception & exception) {
+      return uran_plugin_api::Status::failure(exception.what());
+    }
+  }
+private:
+  std::shared_ptr<uran_plugin_api::LocalMessageAccess> upstream_;
+  uran_plugin_api::PluginIdentity identity_;
+  std::shared_ptr<ScopedPlatformServices> scope_;
+};
+
+class ScopedStateObserverAccess final : public uran_plugin_api::StateObserverAccess
+{
+public:
+  ScopedStateObserverAccess(std::shared_ptr<uran_plugin_api::StateObserverAccess> upstream,
+    std::shared_ptr<ScopedPlatformServices> scope);
+  ~ScopedStateObserverAccess() override {revoke();}
+  void enable();
+  void revoke() noexcept;
+  std::shared_ptr<uran_plugin_api::StateObservation> observe(
+    const std::string & prefix, uran_plugin_api::StateChangeCallback callback) override;
+private:
+  class Observation;
+  std::shared_ptr<uran_plugin_api::StateObserverAccess> upstream_;
+  std::shared_ptr<ScopedPlatformServices> scope_;
+  std::mutex mutex_;
+  std::vector<std::shared_ptr<Observation>> observations_;
+  bool revoked_{false};
 };
 }

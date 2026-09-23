@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <numeric>
 #include <regex>
 #include <stdexcept>
 #include <utility>
@@ -204,10 +205,20 @@ Status PluginManager::load(
     if (context.messages()) {
       messages = std::make_shared<ScopedMessageAccess>(context.messages(), identity, services);
     }
+    std::shared_ptr<uran_plugin_api::LocalMessageAccess> local_messages;
+    if (context.local_messages()) {
+      local_messages = std::make_shared<ScopedLocalMessageAccess>(
+        context.local_messages(), identity, services);
+    }
+    std::shared_ptr<uran_plugin_api::StateObserverAccess> state_observer;
+    if (context.state_observer()) {
+      state_observer = std::make_shared<ScopedStateObserverAccess>(
+        context.state_observer(), services);
+    }
     plugin_context = std::make_shared<uran_plugin_api::PluginContext>(
       services,
       std::move(state_access), context.route_resolver(),
-      identity, instance_scope, messages, context.capabilities());
+      identity, instance_scope, messages, context.capabilities(), local_messages, state_observer);
   } catch (const std::exception & exception) {
     std::lock_guard<std::mutex> lock(mutex_);
     entries_.erase(identity.instance_id);
@@ -289,6 +300,7 @@ Status PluginManager::activate(const std::string & instance_id)
   PluginIdentity identity;
   int priority = 0;
   std::shared_ptr<ScopedPlatformServices> services;
+  std::shared_ptr<ScopedStateObserverAccess> state_observer;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     auto * entry = find_entry(instance_id);
@@ -306,8 +318,11 @@ Status PluginManager::activate(const std::string & instance_id)
     identity = entry->specification.identity;
     priority = entry->specification.priority;
     services = std::dynamic_pointer_cast<ScopedPlatformServices>(entry->context->platform());
+    state_observer = std::dynamic_pointer_cast<ScopedStateObserverAccess>(
+      entry->context->state_observer());
   }
   services->enable();
+  if (state_observer) {state_observer->enable();}
 
   Status result;
   try {
@@ -319,6 +334,7 @@ Status PluginManager::activate(const std::string & instance_id)
   }
 
   if (!result.ok) {
+    if (state_observer) {state_observer->revoke();}
     services->revoke();
     try {static_cast<void>(instance->deactivate());} catch (...) {}
   }
@@ -335,6 +351,7 @@ Status PluginManager::activate(const std::string & instance_id)
       result = Status::failure("读取或注册插件能力时发生未知异常");
     }
     if (!result.ok) {
+      if (state_observer) {state_observer->revoke();}
       services->revoke();
       // 能力登记失败时插件不能进入可用状态，尽力恢复到停止状态。
       try {
@@ -360,6 +377,7 @@ Status PluginManager::deactivate(const std::string & instance_id)
 {
   std::shared_ptr<uran_plugin_api::Plugin> instance;
   std::shared_ptr<ScopedPlatformServices> services;
+  std::shared_ptr<ScopedStateObserverAccess> state_observer;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     auto * entry = find_entry(instance_id);
@@ -378,7 +396,10 @@ Status PluginManager::deactivate(const std::string & instance_id)
     entry->transitioning = true;
     instance = entry->instance;
     services = std::dynamic_pointer_cast<ScopedPlatformServices>(entry->context->platform());
+    state_observer = std::dynamic_pointer_cast<ScopedStateObserverAccess>(
+      entry->context->state_observer());
   }
+  if (state_observer) {state_observer->revoke();}
   services->revoke();
 
   Status result;
@@ -428,6 +449,9 @@ Status PluginManager::unload(const std::string & instance_id)
     entry->transitioning = true;
   }
   std::dynamic_pointer_cast<ScopedPlatformServices>(plugin_context->platform())->revoke();
+  if (const auto observer = std::dynamic_pointer_cast<ScopedStateObserverAccess>(
+      plugin_context->state_observer()))
+  {observer->revoke();}
 
   if (state == PluginState::active || state == PluginState::error) {
     Status stopped;
@@ -496,7 +520,7 @@ Status PluginManager::configure_and_load_all(
           std::string("默认设备标识配置无效: ") + exception.what());
       }
     }
-    list = plugins_node["plugins"];
+    list.reset(plugins_node["plugins"]);
   }
   if (!list || !list.IsSequence()) {
     return Status::failure("插件配置必须包含 plugins 序列");
@@ -536,14 +560,19 @@ Status PluginManager::configure_and_load_all(
     pending.push_back(std::move(value));
   }
 
+  // YAML::Node assignment changes its referenced contents instead of rebinding.
+  // Sorting Pending objects can therefore overwrite another instance's config.
+  std::vector<std::size_t> order(pending.size());
+  std::iota(order.begin(), order.end(), 0);
   std::stable_sort(
-    pending.begin(), pending.end(),
-    [](const Pending & left, const Pending & right) {
-      return left.specification.priority > right.specification.priority;
+    order.begin(), order.end(),
+    [&pending](std::size_t left, std::size_t right) {
+      return pending[left].specification.priority > pending[right].specification.priority;
     });
 
   std::vector<std::string> loaded_ids;
-  for (const auto & item : pending) {
+  for (const auto index : order) {
+    const auto & item = pending[index];
     const auto loaded = load(item.specification, context, item.config);
     if (!loaded.ok) {
       for (auto iterator = loaded_ids.rbegin(); iterator != loaded_ids.rend(); ++iterator) {

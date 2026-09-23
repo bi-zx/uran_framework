@@ -233,7 +233,7 @@ void LoopbackProtocolPlugin::set_downlink_callback(
 
 }
 
-extern "C" URAN_PLUGIN_API_EXPORT const uran_plugin_api::NativePluginExport * uran_plugin_export_v2()
+extern "C" URAN_PLUGIN_API_EXPORT const uran_plugin_api::NativePluginExport * uran_plugin_export_v3()
 {
   static const uran_plugin_api::NativePluginExport exported{
     uran_plugin_api::kNativePluginAbiVersion,

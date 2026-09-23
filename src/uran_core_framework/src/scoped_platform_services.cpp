@@ -18,6 +18,53 @@ void ScopedPlatformServices::enable()
   std::lock_guard<std::mutex> lock(mutex_);
   enabled_ = true;
 }
+
+class ScopedStateObserverAccess::Observation final : public uran_plugin_api::StateObservation
+{
+public:
+  explicit Observation(std::shared_ptr<uran_plugin_api::StateObservation> upstream)
+  : upstream_(std::move(upstream)) {}
+  void cancel() noexcept override
+  {
+    std::shared_ptr<uran_plugin_api::StateObservation> upstream;
+    {std::lock_guard<std::mutex> lock(mutex_); upstream.swap(upstream_);}
+    if (upstream) {upstream->cancel();}
+  }
+private:
+  std::mutex mutex_;
+  std::shared_ptr<uran_plugin_api::StateObservation> upstream_;
+};
+
+ScopedStateObserverAccess::ScopedStateObserverAccess(
+  std::shared_ptr<uran_plugin_api::StateObserverAccess> upstream,
+  std::shared_ptr<ScopedPlatformServices> scope)
+: upstream_(std::move(upstream)), scope_(std::move(scope)) {}
+
+void ScopedStateObserverAccess::enable()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  revoked_ = false;
+}
+
+void ScopedStateObserverAccess::revoke() noexcept
+{
+  std::vector<std::shared_ptr<Observation>> observations;
+  {std::lock_guard<std::mutex> lock(mutex_); revoked_ = true; observations.swap(observations_);}
+  for (const auto & observation : observations) {if (observation) {observation->cancel();}}
+}
+
+std::shared_ptr<uran_plugin_api::StateObservation> ScopedStateObserverAccess::observe(
+  const std::string & prefix, uran_plugin_api::StateChangeCallback callback)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (revoked_ || !scope_->enabled()) {return {};}
+  auto observation = std::make_shared<Observation>(upstream_->observe(prefix,
+    [scope = scope_, callback = std::move(callback)](const auto & field, const auto & value) {
+      if (scope->enabled() && callback) {callback(field, value);}
+    }));
+  observations_.push_back(observation);
+  return observation;
+}
 void ScopedPlatformServices::revoke() noexcept
 {
   std::vector<std::weak_ptr<uran_plugin_api::Cancellation>> tasks;

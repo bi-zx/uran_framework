@@ -1,6 +1,10 @@
 /build*/
 /install*/
 /log*/
+**/build/
+**/*.egg-info/
+**/__pycache__/
+**/*.pyc
 /.deps/
 __pycache__/
 *.pyc

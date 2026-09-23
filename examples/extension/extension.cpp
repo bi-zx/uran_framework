@@ -5,7 +5,7 @@ class ExampleExtension final : public uran_plugin_api::MessagePlugin
 {
 public:
   uran_plugin_api::PluginDescriptor descriptor() const override
-  {return {"extension", "1.0.0", "2.0", "example/Extension"};}
+  {return {"extension", "1.0.0", uran_plugin_api::kPluginApiVersion, "example/Extension"};}
   uran_plugin_api::Status configure(const uran_plugin_api::PluginContext & context, const YAML::Node &) override
   {
     state_ = context.state_access();
@@ -34,7 +34,7 @@ private:
   bool active_{false};
 };
 
-extern "C" URAN_PLUGIN_API_EXPORT const uran_plugin_api::NativePluginExport * uran_plugin_export_v2()
+extern "C" URAN_PLUGIN_API_EXPORT const uran_plugin_api::NativePluginExport * uran_plugin_export_v3()
 {
   static const uran_plugin_api::NativePluginExport exported{
     uran_plugin_api::kNativePluginAbiVersion, "example/Extension",

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "uran.worker.jsonl.v1",
+  "title": "URAN worker JSONL frame",
+  "type": "object",
+  "required": ["kind"],
+  "properties": {
+    "kind": {"enum": ["request", "reply", "event", "host_request", "host_reply"]},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "operation_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "sequence": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["accepted", "running", "succeeded", "failed", "cancelled"]},
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "retryable", "details"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "message": {"type": "string"},
+        "retryable": {"type": "boolean"},
+        "details": {"type": "object"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

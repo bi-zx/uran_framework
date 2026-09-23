@@ -118,7 +118,8 @@ std::chrono::system_clock::time_point NativePlatform::system_now() const
 std::chrono::steady_clock::time_point NativePlatform::steady_now() const
 {return std::chrono::steady_clock::now();}
 std::vector<std::string> NativePlatform::interfaces() const
-{return {"log", "clock.system", "clock.steady", "scheduler.serial", "timer"};}
+{return {"log", "clock.system", "clock.steady", "scheduler.serial", "timer",
+  "process.worker.jsonl.v1"};}
 bool NativePlatform::on_executor_thread() const noexcept
 {return std::this_thread::get_id() == impl_->worker_id;}
 std::shared_ptr<uran_plugin_api::Cancellation> NativePlatform::post(std::function<void()> callback)

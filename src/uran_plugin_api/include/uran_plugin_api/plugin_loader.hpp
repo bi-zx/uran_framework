@@ -9,8 +9,8 @@
 namespace uran_plugin_api
 {
 
-inline constexpr const char * kPluginApiVersion = "2.0";
-inline constexpr unsigned kNativePluginAbiVersion = 2;
+inline constexpr const char * kPluginApiVersion = "2.1";
+inline constexpr unsigned kNativePluginAbiVersion = 3;
 
 /** Objects must retain their loader/library until their destructor returns. */
 class PluginLoader

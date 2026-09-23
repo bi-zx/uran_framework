@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package": "example_extension",
   "version": "1.0.0",
-  "api_version": "2.0",
+  "api_version": "2.1",
   "requires": {"os": ["Linux"], "commands": ["cmake", "c++"]},
   "build": {"kind": "cmake", "source": "."},
   "plugin_manifest": "plugin.json"

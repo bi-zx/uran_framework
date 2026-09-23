@@ -64,9 +64,9 @@ std::shared_ptr<uran_plugin_api::Plugin> NativePluginLoader::create(const std::s
   auto library = std::shared_ptr<void>(raw_library, [](void * handle) {dlclose(handle);});
   dlerror();
   auto entry = reinterpret_cast<uran_plugin_api::NativePluginEntry>(
-    dlsym(library.get(), "uran_plugin_export_v2"));
+    dlsym(library.get(), "uran_plugin_export_v3"));
   const char * error = dlerror();
-  if (error || !entry) {throw std::runtime_error("missing uran_plugin_export_v2: " + path);}
+  if (error || !entry) {throw std::runtime_error("missing uran_plugin_export_v3: " + path);}
   const auto exported = entry();
   if (!exported || exported->abi_version != uran_plugin_api::kNativePluginAbiVersion ||
     !exported->class_type || class_type != exported->class_type ||

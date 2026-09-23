@@ -17,7 +17,7 @@ if(NOT URAN_BUILD_NATIVE)
   return()
 endif()
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/plugin.json" CONTENT
-  "{\"schema_version\":1,\"package\":\"uran_loopback\",\"version\":\"2.0.0\",\"api_version\":\"2.0\",\"plugins\":[{\"class_type\":\"uran_core_example_plugins/LoopbackProtocolPlugin\",\"library\":\"$<TARGET_FILE:uran_core_example_plugins>\"}]}")
+  "{\"schema_version\":1,\"package\":\"uran_loopback\",\"version\":\"2.1.0\",\"api_version\":\"2.1\",\"plugins\":[{\"class_type\":\"uran_core_example_plugins/LoopbackProtocolPlugin\",\"library\":\"$<TARGET_FILE:uran_core_example_plugins>\"}]}")
 target_compile_definitions(uran_tests PRIVATE URAN_TEST_MANIFEST="${CMAKE_CURRENT_BINARY_DIR}/plugin.json")
 add_test(NAME uran_native_host COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_native_host.py
   $<TARGET_FILE:uran_runtime> ${CMAKE_CURRENT_BINARY_DIR}/plugin.json ${PROJECT_SOURCE_DIR}/config/loopback.yaml)
@@ -26,3 +26,20 @@ add_test(NAME uran_plugin_install COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_
   ${PROJECT_SOURCE_DIR}/scripts/uran_plugin.py $<TARGET_FILE:uran_runtime> $<TARGET_FILE:uran_core_example_plugins>
   ${PROJECT_BINARY_DIR} ${PROJECT_SOURCE_DIR}/examples/extension)
 set_tests_properties(uran_plugin_install PROPERTIES TIMEOUT 60)
+add_test(NAME uran_worker_sdk COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_worker_sdk.py
+  ${PROJECT_SOURCE_DIR}/python/uran_worker_sdk)
+add_test(NAME uran_worker_process COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_worker_process.py
+  $<TARGET_FILE:uran_runtime>
+  ${CMAKE_CURRENT_BINARY_DIR}/worker_plugin.json
+  ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/worker_probe.py)
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/worker_plugin.json" CONTENT
+  "{\"schema_version\":1,\"package\":\"uran_worker_adapter\",\"version\":\"1.0.0\",\"api_version\":\"2.1\",\"plugins\":[{\"class_type\":\"uran_worker_adapter/WorkerProcessPlugin\",\"library\":\"$<TARGET_FILE:uran_worker_adapter>\"}]}")
+set_tests_properties(uran_worker_sdk uran_worker_process PROPERTIES TIMEOUT 30)
+add_test(NAME uran_worker_failures COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_worker_failures.py
+  $<TARGET_FILE:uran_runtime>
+  ${CMAKE_CURRENT_BINARY_DIR}/worker_plugin.json
+  ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/worker_modes.py)
+set_tests_properties(uran_worker_failures PROPERTIES TIMEOUT 30)

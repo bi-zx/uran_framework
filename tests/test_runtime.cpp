@@ -22,6 +22,7 @@ struct Probe
   int configured{0}, activated{0}, stopped{0}, cleaned{0}, handled{0};
   std::string owner;
   std::string last_payload;
+  std::string config_marker;
   std::shared_ptr<StateAccess> access;
   std::shared_ptr<PlatformServices> platform;
   std::shared_ptr<MessageAccess> messages;
@@ -33,11 +34,12 @@ class Extension : public MessagePlugin
 {
 public:
   explicit Extension(std::shared_ptr<Probe> probe) : probe_(std::move(probe)) {}
-  PluginDescriptor descriptor() const override {return {"extension", "2.0.0", "2.0", "test/Extension"};}
+  PluginDescriptor descriptor() const override {return {"extension", "2.1.0", kPluginApiVersion, "test/Extension"};}
   Status configure(const PluginContext & context, const YAML::Node & config) override
   {
     ++probe_->configured;
     probe_->owner = context.instance_id();
+    probe_->config_marker = config["marker"] ? config["marker"].as<std::string>() : "";
     probe_->access = context.state_access();
     probe_->platform = context.platform();
     probe_->messages = context.messages();
@@ -117,6 +119,22 @@ struct RuntimeTest : ::testing::Test
   UranRuntime runtime{loader, platform};
   void SetUp() override {ASSERT_TRUE(runtime.start(YAML::Load("plugins: []")).ok);}
 };
+}
+
+TEST_F(RuntimeTest, AssemblySortingPreservesEachPrivateConfiguration)
+{
+  ASSERT_TRUE(runtime.stop().ok);
+  auto assembly = YAML::Load("plugins: []");
+  for (const auto & id : {"low", "high", "middle"}) {
+    auto item = specification(id, "robot_a", std::string(id) == "high" ? 100 : 0);
+    item["config"]["marker"] = id;
+    assembly["plugins"].push_back(item);
+  }
+  ASSERT_TRUE(runtime.start(assembly).ok);
+  ASSERT_EQ(loader->probes.size(), 3U);
+  EXPECT_EQ(loader->probes.front()->owner, "high");
+  for (const auto & probe : loader->probes) {EXPECT_EQ(probe->config_marker, probe->owner);}
+  EXPECT_EQ(assembly["plugins"][0]["config"]["marker"].as<std::string>(), "low");
 }
 
 TEST_F(RuntimeTest, TargetRoutingAndLifecycleStaySynchronized)

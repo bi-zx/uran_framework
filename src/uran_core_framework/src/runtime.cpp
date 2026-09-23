@@ -81,6 +81,17 @@ private:
   Publish publish_;
 };
 
+class RuntimeLocalMessageAccess final : public uran_plugin_api::LocalMessageAccess
+{
+public:
+  using Dispatch = std::function<Status(const uran_plugin_api::DownlinkEnvelope &)>;
+  explicit RuntimeLocalMessageAccess(Dispatch dispatch) : dispatch_(std::move(dispatch)) {}
+  Status dispatch(const uran_plugin_api::DownlinkEnvelope & message) override
+  {return dispatch_(message);}
+private:
+  Dispatch dispatch_;
+};
+
 struct Session
 {
   std::shared_ptr<StateStore> state{std::make_shared<StateStore>()};
@@ -113,14 +124,18 @@ struct Session
     for (const auto & active : manager->active_instances()) {
       if (active.identity.instance_id != id) {continue;}
       try {
-        if (const auto protocol = std::dynamic_pointer_cast<uran_plugin_api::ProtocolPlugin>(active.instance)) {
+        if (active.descriptor.plugin_type == "protocol") {
+          const auto protocol = std::dynamic_pointer_cast<uran_plugin_api::ProtocolPlugin>(active.instance);
+          if (!protocol) {return Status::failure("protocol plugin does not implement ProtocolPlugin");}
           const auto result = gateway->register_protocol(active.identity, protocol, active.priority);
           if (!result.ok) {return result;}
         }
         if (const auto handler = std::dynamic_pointer_cast<uran_plugin_api::MessagePlugin>(active.instance)) {
           const auto capabilities = handler->capabilities().features;
           const auto types = handler->message_types();
-          if (types.empty()) {unbind(id); return Status::failure("message plugin declares no message types");}
+          if (types.empty() && active.descriptor.plugin_type != "protocol") {
+            unbind(id); return Status::failure("message plugin declares no message types");
+          }
           for (const auto & type : types) {
             std::size_t registration = 0;
             const std::weak_ptr<uran_plugin_api::MessagePlugin> weak_handler = handler;
@@ -245,9 +260,16 @@ Status UranRuntime::start(const YAML::Node & configuration)
         const auto live = weak_session.lock();
         return live ? live->gateway->publish(message, preferred) : Status::failure("runtime stopped");
       });
+    auto local_messages = std::make_shared<RuntimeLocalMessageAccess>(
+      [weak_session, depth = impl_->callback_depth](const auto & message) {
+        CallbackGuard guard(*depth);
+        const auto live = weak_session.lock();
+        return live ? live->router->route(message) : Status::failure("runtime stopped");
+      });
     candidate->context = std::make_unique<PluginContext>(
       impl_->platform, candidate->state, candidate->routes,
-      PluginIdentity{"uran_runtime", "runtime", "runtime"}, "runtime", messages, candidate->capabilities);
+      PluginIdentity{"uran_runtime", "runtime", "runtime"}, "runtime", messages,
+      candidate->capabilities, local_messages, candidate->state);
     candidate->started = impl_->platform->steady_now();
     candidate->router->set_unhandled_handler(impl_->unhandled);
     const std::weak_ptr<PlatformServices> weak_platform = impl_->platform;

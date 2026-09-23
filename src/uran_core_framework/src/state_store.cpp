@@ -1,19 +1,143 @@
 #include "uran_core_framework/state_store.hpp"
 
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <cstdint>
 #include <limits>
 #include <regex>
 #include <utility>
 #include <stdexcept>
+#include <thread>
 
 #include <nlohmann/json.hpp>
 
 namespace uran_core_framework
 {
 
+struct ObservationRegistry
+{
+  struct Entry
+  {
+    std::mutex mutex;
+    std::condition_variable idle;
+    StateStore::ChangeCallback callback;
+    bool cancelled{false};
+    bool running{false};
+    std::thread::id runner;
+    std::deque<std::pair<std::string, StateValue>> pending;
+  };
+
+  std::mutex mutex;
+  std::map<std::size_t, std::shared_ptr<Entry>> entries;
+  std::size_t next_id{1};
+  bool alive{true};
+
+  std::size_t add(StateStore::ChangeCallback callback)
+  {
+    auto entry = std::make_shared<Entry>();
+    entry->callback = std::move(callback);
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!alive) {return 0;}
+    const auto id = next_id++;
+    entries.emplace(id, std::move(entry));
+    return id;
+  }
+
+  void cancel(std::size_t id) noexcept
+  {
+    std::shared_ptr<Entry> entry;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      const auto found = entries.find(id);
+      if (found == entries.end()) {return;}
+      entry = found->second;
+      entries.erase(found);
+    }
+    std::unique_lock<std::mutex> lock(entry->mutex);
+    entry->cancelled = true;
+    entry->callback = nullptr;
+    entry->pending.clear();
+    entry->idle.notify_all();
+    if (entry->runner != std::this_thread::get_id()) {
+      entry->idle.wait(lock, [&entry] {return !entry->running;});
+    }
+  }
+
+  void emit(const std::string & field, const StateValue & value)
+  {
+    std::vector<std::shared_ptr<Entry>> copy;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      for (const auto & item : entries) {copy.push_back(item.second);}
+    }
+    for (const auto & entry : copy) {
+      bool drain = false;
+      {
+        std::lock_guard<std::mutex> lock(entry->mutex);
+        if (entry->cancelled || !entry->callback) {continue;}
+        entry->pending.emplace_back(field, value);
+        if (!entry->running) {
+          entry->running = true;
+          entry->runner = std::this_thread::get_id();
+          drain = true;
+        }
+      }
+      if (!drain) {continue;}
+      while (true) {
+        StateStore::ChangeCallback callback;
+        std::pair<std::string, StateValue> change;
+        {
+          std::lock_guard<std::mutex> lock(entry->mutex);
+          if (entry->cancelled || entry->pending.empty()) {
+            entry->running = false;
+            entry->runner = {};
+            entry->idle.notify_all();
+            break;
+          }
+          change = std::move(entry->pending.front());
+          entry->pending.pop_front();
+          callback = entry->callback;
+        }
+        try {if (callback) {callback(change.first, change.second);}} catch (...) {}
+      }
+    }
+  }
+
+  void shutdown() noexcept
+  {
+    std::vector<std::size_t> ids;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      alive = false;
+      for (const auto & item : entries) {ids.push_back(item.first);}
+    }
+    for (const auto id : ids) {cancel(id);}
+  }
+};
+
 namespace
 {
+
+class StoreObservation final : public uran_plugin_api::StateObservation
+{
+public:
+  StoreObservation(std::weak_ptr<ObservationRegistry> registry, std::size_t id)
+  : registry_(std::move(registry)), id_(id) {}
+  ~StoreObservation() override {cancel();}
+  void cancel() noexcept override
+  {
+    try {
+      std::size_t id = 0;
+      {std::lock_guard<std::mutex> lock(mutex_); std::swap(id, id_);}
+      if (id) {if (const auto registry = registry_.lock()) {registry->cancel(id);}}
+    } catch (...) {}
+  }
+private:
+  std::mutex mutex_;
+  std::weak_ptr<ObservationRegistry> registry_;
+  std::size_t id_{0};
+};
 
 std::string trim_copy(const std::string & value)
 {
@@ -30,7 +154,8 @@ std::string trim_copy(const std::string & value)
 StateStore::StateStore(const bool allow_extension_fields,
   std::shared_ptr<uran_plugin_api::StateStorage> storage,
   std::function<std::chrono::system_clock::time_point()> clock)
-: allow_extension_fields_(allow_extension_fields), storage_(std::move(storage)), clock_(std::move(clock))
+: allow_extension_fields_(allow_extension_fields), storage_(std::move(storage)), clock_(std::move(clock)),
+  observations_(std::make_shared<ObservationRegistry>())
 {
   if (!clock_) {throw std::invalid_argument("state clock is required");}
   if (storage_) {
@@ -47,6 +172,8 @@ StateStore::StateStore(const bool allow_extension_fields,
     }
   }
 }
+
+StateStore::~StateStore() {observations_->shutdown();}
 
 Status StateStore::register_field(const StateFieldSpec & specification)
 {
@@ -133,7 +260,6 @@ Status StateStore::set(
   }
 
   StateValue state_value;
-  std::vector<ChangeCallback> callbacks;
   {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     auto specification = specifications_.find(field_name);
@@ -174,22 +300,11 @@ Status StateStore::set(
       old_value->second.persistent != state_value.persistent;
     if (extension) {specifications_.emplace(field_name, candidate);}
     values_[field_name] = state_value;
-    if (changed) {
-      callbacks.reserve(callbacks_.size());
-      for (const auto & item : callbacks_) {callbacks.push_back(item.second);}
-    }
+    if (!changed) {return Status::success();}
   }
 
   // 回调在锁外执行，防止订阅者在回调中再次访问状态空间时发生死锁
-  for (const auto & callback : callbacks) {
-    if (callback) {
-      try {
-        callback(field_name, state_value);
-      } catch (...) {
-        // 单个观察者故障不能改变已经提交的状态，也不能阻断其他观察者
-      }
-    }
-  }
+  observations_->emit(field_name, state_value);
   return Status::success();
 }
 
@@ -231,16 +346,25 @@ std::size_t StateStore::subscribe(ChangeCallback callback)
   if (!callback) {
     return 0U;
   }
-  std::unique_lock<std::shared_mutex> lock(mutex_);
-  const auto id = next_subscription_id_++;
-  callbacks_.emplace(id, std::move(callback));
-  return id;
+  return observations_->add(std::move(callback));
 }
 
 void StateStore::unsubscribe(const std::size_t subscription_id)
 {
-  std::unique_lock<std::shared_mutex> lock(mutex_);
-  callbacks_.erase(subscription_id);
+  observations_->cancel(subscription_id);
+}
+
+std::shared_ptr<uran_plugin_api::StateObservation> StateStore::observe(
+  const std::string & field_prefix, uran_plugin_api::StateChangeCallback callback)
+{
+  if (!callback) {return {};}
+  const auto id = subscribe([field_prefix, callback = std::move(callback)](
+    const auto & field, const auto & value) {
+      if (field_prefix.empty() || field.rfind(field_prefix, 0) == 0) {callback(field, value);}
+    });
+  // StateStore owns observations only while Runtime/session exists. PluginManager
+  // destroys every scoped observation before the session destroys this store.
+  return std::make_shared<StoreObservation>(observations_, id);
 }
 
 bool StateStore::valid_field_name(const std::string & field_name)

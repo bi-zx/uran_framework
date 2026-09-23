@@ -21,7 +21,7 @@ import tempfile
 import urllib.parse
 import urllib.request
 
-API_VERSION = "2.0"
+API_VERSION = "2.1"
 NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]*$")
 
 

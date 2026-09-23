@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(uran_core_example_plugins VERSION 2.0.0 LANGUAGES CXX)
+project(uran_core_example_plugins VERSION 2.1.0 LANGUAGES CXX)
 include(../../cmake/Package.cmake)
 if(NOT TARGET uran::uran_plugin_api)
   find_package(uran_plugin_api 2 REQUIRED CONFIG)
