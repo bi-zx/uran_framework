@@ -7,7 +7,6 @@
 #include <chrono>
 #include <csignal>
 #include <cstring>
-#include <filesystem>
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
@@ -174,9 +173,16 @@ uran_plugin_api::Status WorkerProcessPlugin::spawn()
   posix_spawn_file_actions_addclose(&actions, to_child[1]);
   posix_spawn_file_actions_addclose(&actions, from_child[0]);
   posix_spawn_file_actions_addclose(&actions, from_child[1]);
+#if defined(__GLIBC__) && defined(__GLIBC_PREREQ) && __GLIBC_PREREQ(2, 29)
   if (!working_directory_.empty()) {
     posix_spawn_file_actions_addchdir_np(&actions, working_directory_.c_str());
   }
+#else
+  // glibc 2.28 and older do not expose addchdir_np. Production commands use
+  // absolute paths on those systems, so leaving the inherited directory is
+  // safe and keeps the worker adapter portable to CyberDog2's Ubuntu 18.04.
+  (void)working_directory_;
+#endif
   posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
   posix_spawnattr_setpgroup(&attributes, 0);
   pid_t pid = -1;

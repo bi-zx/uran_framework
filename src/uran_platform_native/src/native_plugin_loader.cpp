@@ -1,7 +1,13 @@
 #include "uran_platform_native/native_plugin_loader.hpp"
 
 #include <dlfcn.h>
+#if __has_include(<filesystem>)
 #include <filesystem>
+namespace uran_fs = std::filesystem;
+#else
+#include <experimental/filesystem>
+namespace uran_fs = std::experimental::filesystem;
+#endif
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
@@ -22,9 +28,9 @@ uran_plugin_api::Status NativePluginLoader::add_manifest(const std::string & pat
     std::map<std::string, std::string> candidate;
     for (const auto & entry : entries) {
       const auto name = entry.at("class_type").get<std::string>();
-      const auto library = std::filesystem::canonical(
-        std::filesystem::path(path).parent_path() / entry.at("library").get<std::string>());
-      if (name.empty() || !std::filesystem::is_regular_file(library) ||
+      const auto library = uran_fs::canonical(
+        uran_fs::path(path).parent_path() / entry.at("library").get<std::string>());
+      if (name.empty() || !uran_fs::is_regular_file(library) ||
         !candidate.emplace(name, library.string()).second)
       {throw std::runtime_error("invalid or duplicate plugin class: " + name);}
     }

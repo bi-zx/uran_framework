@@ -2,7 +2,13 @@
 #include <cerrno>
 #include <csignal>
 #include <cstring>
+#if __has_include(<filesystem>)
 #include <filesystem>
+namespace uran_fs = std::filesystem;
+#else
+#include <experimental/filesystem>
+namespace uran_fs = std::experimental::filesystem;
+#endif
 #include <iostream>
 #include <fstream>
 #include <mutex>
@@ -97,7 +103,7 @@ public:
     sockaddr_un address{};
     address.sun_family = AF_UNIX;
     if (path.empty() || path.size() >= sizeof(address.sun_path)) {throw std::runtime_error("invalid control socket path");}
-    if (std::filesystem::exists(path)) {throw std::runtime_error("control socket path already exists: " + path);}
+    if (uran_fs::exists(path)) {throw std::runtime_error("control socket path already exists: " + path);}
     std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
     descriptor_ = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (descriptor_ < 0) {throw std::runtime_error("cannot create control socket");}
@@ -181,7 +187,7 @@ int main(int argc, char ** argv)
       const auto config = YAML::LoadFile(config_path);
       if (config["plugin_manifests"]) {
         for (const auto & item : config["plugin_manifests"]) {
-          manifests.push_back((std::filesystem::absolute(config_path).parent_path() /
+          manifests.push_back((uran_fs::absolute(config_path).parent_path() /
             item.as<std::string>()).string());
         }
       }
@@ -195,8 +201,13 @@ int main(int argc, char ** argv)
       }
     }
     for (const auto & directory : directories) {
-      for (const auto & entry : std::filesystem::recursive_directory_iterator(directory)) {
-        if (entry.is_regular_file() && entry.path().filename() == "plugin.json") {manifests.push_back(entry.path().string());}
+      for (const auto & entry : uran_fs::recursive_directory_iterator(directory)) {
+        // GCC 7's experimental filesystem directory_entry does not expose
+        // is_regular_file(); use the namespace-level query for both the
+        // std::filesystem and experimental implementations.
+        if (uran_fs::is_regular_file(entry.path()) && entry.path().filename() == "plugin.json") {
+          manifests.push_back(entry.path().string());
+        }
       }
     }
     for (const auto & manifest : manifests) {

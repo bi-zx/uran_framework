@@ -1,6 +1,12 @@
 #include "uran_core_framework/runtime.hpp"
 
+#if __has_include(<filesystem>)
 #include <filesystem>
+namespace uran_fs = std::filesystem;
+#else
+#include <experimental/filesystem>
+namespace uran_fs = std::experimental::filesystem;
+#endif
 #include <future>
 #include <map>
 #include <mutex>
@@ -410,13 +416,13 @@ Status UranRuntime::start(const YAML::Node & configuration)
 Status UranRuntime::start_file(const std::string & path)
 {
   try {
-    const auto absolute = std::filesystem::absolute(path);
+    const auto absolute = uran_fs::absolute(path);
     auto config = YAML::LoadFile(absolute.string());
     if (config["plugins"] && config["plugins"].IsSequence()) {
       for (auto item : config["plugins"]) {
         if (item["config_file"]) {
           item["config_file"] = (absolute.parent_path() /
-            item["config_file"].as<std::string>()).lexically_normal().string();
+            item["config_file"].as<std::string>()).string();
         }
       }
     }

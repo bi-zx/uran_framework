@@ -1,7 +1,13 @@
 #include "uran_platform_native/file_state_storage.hpp"
 
 #include <cerrno>
+#if __has_include(<filesystem>)
 #include <filesystem>
+namespace uran_fs = std::filesystem;
+#else
+#include <experimental/filesystem>
+namespace uran_fs = std::experimental::filesystem;
+#endif
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
@@ -16,7 +22,7 @@ FileStateStorage::FileStateStorage(std::string path) : path_(std::move(path))
 std::vector<uran_plugin_api::StoredState> FileStateStorage::load()
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (!std::filesystem::exists(path_)) {return {};}
+  if (!uran_fs::exists(path_)) {return {};}
   std::ifstream input(path_);
   if (!input) {throw std::runtime_error("cannot read state file: " + path_);}
   const auto root = Json::parse(input);
@@ -52,8 +58,8 @@ uran_plugin_api::Status FileStateStorage::save(const std::vector<uran_plugin_api
         {"updated_at_ns", std::chrono::duration_cast<std::chrono::nanoseconds>(
           record.value.updated_at.time_since_epoch()).count()}});
     }
-    const auto path = std::filesystem::absolute(path_);
-    std::filesystem::create_directories(path.parent_path());
+    const auto path = uran_fs::absolute(path_);
+    uran_fs::create_directories(path.parent_path());
     temporary = path.string() + ".tmp-XXXXXX";
     descriptor = mkstemp(temporary.data());
     if (descriptor < 0) {throw std::runtime_error("cannot create state snapshot");}
@@ -67,7 +73,7 @@ uran_plugin_api::Status FileStateStorage::save(const std::vector<uran_plugin_api
     }
     if (fsync(descriptor) != 0) {throw std::runtime_error("cannot sync state snapshot");}
     close(descriptor); descriptor = -1;
-    std::filesystem::rename(temporary, path);
+    uran_fs::rename(temporary, path);
     return uran_plugin_api::Status::success();
   } catch (const std::exception & exception) {
     if (descriptor >= 0) {close(descriptor);}

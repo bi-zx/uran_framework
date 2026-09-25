@@ -8,6 +8,11 @@ if(NOT TARGET nlohmann_json::nlohmann_json)
   find_package(nlohmann_json 3.10 REQUIRED)
 endif()
 find_package(Threads REQUIRED)
+set(URAN_FILESYSTEM_LIBS)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+   CMAKE_CXX_COMPILER_VERSION VERSION_LESS 8)
+  list(APPEND URAN_FILESYSTEM_LIBS stdc++fs)
+endif()
 add_library(${PROJECT_NAME} SHARED
   src/capability_registry.cpp src/config_manager.cpp src/message_router.cpp
   src/plugin_manager.cpp src/protocol_gateway.cpp src/route_catalog.cpp
@@ -15,4 +20,4 @@ add_library(${PROJECT_NAME} SHARED
   src/runtime.cpp)
 uran_library(${PROJECT_NAME} "find_dependency(uran_plugin_api 2)\nfind_dependency(nlohmann_json 3.10)\nfind_dependency(Threads)")
 target_compile_definitions(${PROJECT_NAME} PRIVATE URAN_CORE_FRAMEWORK_BUILDING_DLL)
-target_link_libraries(${PROJECT_NAME} PUBLIC uran::uran_plugin_api nlohmann_json::nlohmann_json Threads::Threads)
+target_link_libraries(${PROJECT_NAME} PUBLIC uran::uran_plugin_api nlohmann_json::nlohmann_json Threads::Threads ${URAN_FILESYSTEM_LIBS})

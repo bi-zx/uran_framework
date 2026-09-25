@@ -1,14 +1,12 @@
 """Small, dependency-free JSONL worker server."""
 
-from __future__ import annotations
-
 import json
 import queue
 import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, BinaryIO, Dict, Iterable, Mapping
+from typing import Any, BinaryIO, Dict, Iterable, Mapping, Optional, Tuple
 
 PROTOCOL = "uran.worker.jsonl.v1"
 TERMINAL_STATES = frozenset(("succeeded", "failed", "cancelled", "rejected"))
@@ -41,7 +39,7 @@ class Worker:
     def __init__(self) -> None:
         self.identity: Mapping[str, str] = {}
         self.host: Mapping[str, Any] = {}
-        self._server: WorkerServer | None = None
+        self._server = None
 
     def hello(self, identity: Mapping[str, str], host: Mapping[str, Any]) -> None:
         """Inspect the trusted Runtime identity and negotiated host limits."""
@@ -89,7 +87,7 @@ class Worker:
         raise NotImplementedError("protocol publish is not implemented")
 
     def emit_operation(self, operation_id: str, sequence: int, status: str,
-                       payload: Mapping[str, Any] | None = None,
+                       payload: Optional[Mapping[str, Any]] = None,
                        message_type: str = "uran.operations.state.v1") -> None:
         if not self._server:
             raise RuntimeError("worker is not bound to a server")
@@ -97,7 +95,7 @@ class Worker:
 
     def emit_downlink(self, message_type: str, payload: Mapping[str, Any],
                       correlation_id: str = "",
-                      target: Mapping[str, str] | None = None) -> None:
+                      target: Optional[Mapping[str, str]] = None) -> None:
         if not self._server:
             raise RuntimeError("worker is not bound to a server")
         self._server.emit_downlink(message_type, payload, correlation_id, target)
@@ -147,8 +145,8 @@ class Worker:
 class WorkerServer:
     """Runs one worker over stdin/stdout without importing framework or ROS."""
 
-    def __init__(self, worker: Worker, input_stream: BinaryIO | None = None,
-                 output_stream: BinaryIO | None = None,
+    def __init__(self, worker: Worker, input_stream: Optional[BinaryIO] = None,
+                 output_stream: Optional[BinaryIO] = None,
                  max_frame_bytes: int = MAX_FRAME_BYTES) -> None:
         self.worker = worker
         self.input = input_stream or sys.stdin.buffer
@@ -159,15 +157,15 @@ class WorkerServer:
         self._dispatch_local = threading.local()
         self._output_lock = threading.Lock()
         self._host_request_counter = 0
-        self._incoming: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=128)
+        self._incoming = queue.Queue(maxsize=128)
         self._reply_changed = threading.Condition()
         self._host_replies: Dict[str, Mapping[str, Any]] = {}
-        self._waiting_host_requests: set[str] = set()
+        self._waiting_host_requests = set()
         self._input_closed = False
         self._fatal = False
         self._shutdown = False
         self._calls: Dict[str, Dict[str, Any]] = {}
-        self._state_versions: Dict[tuple[str, str], int] = {}
+        self._state_versions = {}  # type: Dict[Tuple[str, str], int]
         self.host_request_timeout = 5.0
         worker._server = self
 
@@ -180,7 +178,7 @@ class WorkerServer:
             self.output.flush()
 
     def emit_operation(self, operation_id: str, sequence: int, status: str,
-                       payload: Mapping[str, Any] | None = None,
+                       payload: Optional[Mapping[str, Any]] = None,
                        message_type: str = "uran.operations.state.v1") -> None:
         if sequence < 1 or status not in TERMINAL_STATES | {"accepted", "running"}:
             raise ValueError("invalid operation event")
@@ -196,7 +194,7 @@ class WorkerServer:
 
     def emit_downlink(self, message_type: str, payload: Mapping[str, Any],
                       correlation_id: str = "",
-                      target: Mapping[str, str] | None = None) -> None:
+                      target: Optional[Mapping[str, str]] = None) -> None:
         self._write({"kind": "event", "event": "downlink",
                      "message": {"message_type": message_type,
                                  "payload": dict(payload),
