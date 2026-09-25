@@ -218,7 +218,8 @@ Status PluginManager::load(
     plugin_context = std::make_shared<uran_plugin_api::PluginContext>(
       services,
       std::move(state_access), context.route_resolver(),
-      identity, instance_scope, messages, context.capabilities(), local_messages, state_observer);
+      identity, instance_scope, messages, context.capabilities(), local_messages, state_observer,
+      context.runtime_snapshot());
   } catch (const std::exception & exception) {
     std::lock_guard<std::mutex> lock(mutex_);
     entries_.erase(identity.instance_id);

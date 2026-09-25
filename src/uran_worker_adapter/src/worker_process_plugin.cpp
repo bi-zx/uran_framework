@@ -101,6 +101,7 @@ uran_plugin_api::Status WorkerProcessPlugin::configure(
     messages_ = context.messages();
     local_messages_ = context.local_messages();
     observer_ = context.state_observer();
+    runtime_snapshot_ = context.runtime_snapshot();
     identity_ = context.identity();
     state_field_ = "plugin." + identity_.instance_id + ".worker_healthy";
     auto result = state_->register_field({state_field_, "bool", "", "", false});
@@ -443,7 +444,8 @@ void WorkerProcessPlugin::process_frame(const nlohmann::json & frame)
     try {if (platform_) {platform_->post([this, frame] {process_event(frame);});}} catch (...) {}
   } else if (kind == "host_request") {
     const auto op = frame.value("op", "");
-    if (op == "state.register" || op == "state.set" || op == "state.snapshot") {
+    if (op == "state.register" || op == "state.set" || op == "state.snapshot" ||
+      op == "runtime.snapshot") {
       // StateStore is thread-safe. Lifecycle callbacks may need state access
       // while the serial Runtime executor is waiting for their reply.
       process_host_request(frame);
@@ -589,6 +591,9 @@ void WorkerProcessPlugin::process_host_request(const nlohmann::json & frame)
       result = messages_->publish(message);
     } else if (op == "state.snapshot") {
       reply["result"] = nlohmann::json::parse(state_->snapshot_json());
+      result = uran_plugin_api::Status::success();
+    } else if (op == "runtime.snapshot" && runtime_snapshot_) {
+      reply["result"] = nlohmann::json::parse(runtime_snapshot_->snapshot_json());
       result = uran_plugin_api::Status::success();
     } else if (op == "state.set") {
       result = state_->set(frame.at("field").get<std::string>(), frame.at("value").dump(),

@@ -37,7 +37,8 @@ public:
     std::shared_ptr<MessageAccess> messages,
     std::shared_ptr<CapabilityAccess> capabilities,
     std::shared_ptr<LocalMessageAccess> local_messages,
-    std::shared_ptr<StateObserverAccess> state_observer = {});
+    std::shared_ptr<StateObserverAccess> state_observer = {},
+    std::shared_ptr<RuntimeSnapshotAccess> runtime_snapshot = {});
 
   std::shared_ptr<PlatformServices> platform() const noexcept;
   std::shared_ptr<StateAccess> state_access() const noexcept;
@@ -51,6 +52,7 @@ public:
   std::shared_ptr<CapabilityAccess> capabilities() const noexcept;
   std::shared_ptr<LocalMessageAccess> local_messages() const noexcept;
   std::shared_ptr<StateObserverAccess> state_observer() const noexcept;
+  std::shared_ptr<RuntimeSnapshotAccess> runtime_snapshot() const noexcept;
 
 private:
   std::shared_ptr<PlatformServices> platform_;
@@ -62,6 +64,7 @@ private:
   std::shared_ptr<CapabilityAccess> capabilities_;
   std::shared_ptr<LocalMessageAccess> local_messages_;
   std::shared_ptr<StateObserverAccess> state_observer_;
+  std::shared_ptr<RuntimeSnapshotAccess> runtime_snapshot_;
 };
 
 }

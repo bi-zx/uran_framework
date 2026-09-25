@@ -46,6 +46,10 @@ public:
     probe_->capabilities = context.capabilities();
     probe_->fail_activate = config["fail_activate"] && config["fail_activate"].as<bool>();
     probe_->fail_bind = config["fail_bind"] && config["fail_bind"].as<bool>();
+    const bool no_state = config["no_state"] && config["no_state"].as<bool>();
+    if (no_state) {
+      return Status::success();
+    }
     const bool persistent = config["persistent"] && config["persistent"].as<bool>();
     auto result = probe_->access->register_field({"plugin." + probe_->owner + ".counter", "int", "", "", persistent});
     if (result.ok) {result = probe_->access->set("plugin." + probe_->owner + ".counter", "0", probe_->owner);}
@@ -104,11 +108,16 @@ public:
   int saves{0};
   bool fail{false};
 };
-YAML::Node specification(const std::string & id, const std::string & device = "robot_a", int priority = 0)
+YAML::Node specification(
+  const std::string & id,
+  const std::string & device = "robot_a",
+  int priority = 0,
+  const std::string & component = "extension")
 {
   auto node = YAML::Load("component_id: extension\nclass_type: test/Extension\nconfig: {}\n");
   node["instance_id"] = id;
   node["device_id"] = device;
+  node["component_id"] = component;
   node["priority"] = priority;
   return node;
 }
@@ -161,6 +170,40 @@ TEST_F(RuntimeTest, TargetRoutingAndLifecycleStaySynchronized)
   EXPECT_THROW(loader->probes[0]->platform->post([] {}), std::runtime_error);
   EXPECT_EQ(runtime.providers("framework.echo", "robot_a").size(), 1U);
 }
+
+TEST_F(RuntimeTest, StateSnapshotDocumentIncludesEveryComponentAndInstance)
+{
+  ASSERT_TRUE(runtime.load(specification("base", "robot_a", 100, "base")).ok);
+  ASSERT_TRUE(runtime.load(specification("arm_left", "robot_a", 90, "arm")).ok);
+  ASSERT_TRUE(runtime.load(specification("arm_right", "robot_a", 80, "arm")).ok);
+  auto camera = specification("camera", "robot_a", 70, "camera");
+  camera["config"]["no_state"] = true;
+  ASSERT_TRUE(runtime.load(camera).ok);
+
+  const auto document = Json::parse(runtime.state_snapshot_document());
+  ASSERT_EQ(document.value("schema_version", ""), "1.0");
+  ASSERT_EQ(document.value("device_id", ""), "robot_a");
+  ASSERT_TRUE(document.contains("components"));
+
+  std::map<std::string, Json> components;
+  for (const auto & component : document.at("components")) {
+    components.emplace(component.at("component_id").get<std::string>(), component);
+  }
+  ASSERT_EQ(components.size(), 3U);
+  ASSERT_TRUE(components.count("base"));
+  ASSERT_TRUE(components.count("arm"));
+  ASSERT_TRUE(components.count("camera"));
+  ASSERT_EQ(components.at("base").at("instances").size(), 1U);
+  ASSERT_EQ(components.at("arm").at("instances").size(), 2U);
+  EXPECT_EQ(components.at("base").at("instances")[0].at("instance_id"), "base");
+  EXPECT_EQ(components.at("arm").at("instances")[0].at("instance_id"), "arm_left");
+  EXPECT_EQ(components.at("arm").at("instances")[1].at("instance_id"), "arm_right");
+  EXPECT_TRUE(components.at("base").at("fields").contains("plugin.base.counter"));
+  EXPECT_TRUE(components.at("arm").at("fields").contains("plugin.arm_left.counter"));
+  EXPECT_TRUE(components.at("arm").at("fields").contains("plugin.arm_right.counter"));
+  EXPECT_TRUE(components.at("camera").at("fields").empty());
+}
+
 TEST_F(RuntimeTest, FailedLoadReclaimsStateCapabilitiesAndRoutes)
 {
   auto bad = specification("bad");

@@ -48,6 +48,14 @@ public:
     const std::string & device_id = {}, const std::string & component_id = {}) const = 0;
 };
 
+/** @brief Read-only view of the Runtime state and component inventory. */
+class URAN_PLUGIN_API_PUBLIC RuntimeSnapshotAccess
+{
+public:
+  virtual ~RuntimeSnapshotAccess() = default;
+  virtual std::string snapshot_json() const = 0;
+};
+
 /** @brief 插件可使用的状态访问接口。 */
 class URAN_PLUGIN_API_PUBLIC StateAccess
 {

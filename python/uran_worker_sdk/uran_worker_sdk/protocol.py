@@ -123,6 +123,12 @@ class Worker:
             raise RuntimeError("worker is not bound to a server")
         return self._server.host_request("state.snapshot")["result"]
 
+    def runtime_snapshot(self) -> Mapping[str, Any]:
+        """Return the canonical Runtime snapshot, including components."""
+        if not self._server:
+            raise RuntimeError("worker is not bound to a server")
+        return self._server.host_request("runtime.snapshot")["result"]
+
     def set_state(self, field: str, value: Any, persistent: bool = False) -> Mapping[str, Any]:
         if not self._server:
             raise RuntimeError("worker is not bound to a server")

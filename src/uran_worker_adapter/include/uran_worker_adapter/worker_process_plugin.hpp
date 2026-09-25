@@ -90,6 +90,7 @@ private:
   std::shared_ptr<uran_plugin_api::MessageAccess> messages_;
   std::shared_ptr<uran_plugin_api::LocalMessageAccess> local_messages_;
   std::shared_ptr<uran_plugin_api::StateObserverAccess> observer_;
+  std::shared_ptr<uran_plugin_api::RuntimeSnapshotAccess> runtime_snapshot_;
   std::vector<std::shared_ptr<uran_plugin_api::StateObservation>> subscriptions_;
   uran_plugin_api::PluginIdentity identity_;
   std::string state_field_;

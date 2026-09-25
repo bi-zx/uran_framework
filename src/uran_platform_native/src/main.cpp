@@ -39,6 +39,9 @@ Json command(const Json & request, uran_core_framework::UranRuntime & runtime,
     const auto operation = request.at("op").get<std::string>();
     if (operation == "status") {return {{"ok", true}, {"result", Json::parse(runtime.diagnostics())}};}
     if (operation == "snapshot") {return {{"ok", true}, {"result", Json::parse(runtime.state_snapshot())}};}
+    if (operation == "snapshot_document") {
+      return {{"ok", true}, {"result", Json::parse(runtime.state_snapshot_document())}};
+    }
     if (operation == "classes") {return {{"ok", true}, {"result", loader->available_classes()}};}
     if (operation == "providers") {
       Json found = Json::array();

@@ -2,8 +2,10 @@
 
 #include <filesystem>
 #include <future>
+#include <map>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <stdexcept>
 #include <utility>
 #include "uran_core_framework/config_manager.hpp"
@@ -168,6 +170,95 @@ struct Session
     }
   }
 };
+
+const char * health_name(const uran_plugin_api::PluginHealth::Level level) noexcept
+{
+  using Level = uran_plugin_api::PluginHealth::Level;
+  switch (level) {
+    case Level::unknown: return "unknown";
+    case Level::starting: return "starting";
+    case Level::healthy: return "healthy";
+    case Level::degraded: return "degraded";
+    case Level::error: return "error";
+    case Level::stopped: return "stopped";
+  }
+  return "unknown";
+}
+
+Json build_state_snapshot_document(const Session & session)
+{
+  Json document{{"schema_version", "1.0"}, {"timestamp_ns", static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count())},
+    {"components", Json::array()}, {"unscoped_fields", Json::object()},
+    {"fields", Json::object()}};
+
+  const auto infos = session.manager ? session.manager->list() :
+    std::vector<uran_plugin_api::PluginRuntimeInfo>{};
+  std::map<std::pair<std::string, std::string>, std::size_t> component_indexes;
+  std::map<std::string, std::pair<std::string, std::string>> instance_components;
+  std::set<std::string> devices;
+
+  for (const auto & info : infos) {
+    const auto & identity = info.identity;
+    if (identity.device_id.empty() || identity.component_id.empty() || identity.instance_id.empty()) {
+      continue;
+    }
+    devices.insert(identity.device_id);
+    const auto key = std::make_pair(identity.device_id, identity.component_id);
+    auto found = component_indexes.find(key);
+    if (found == component_indexes.end()) {
+      const auto index = document["components"].size();
+      component_indexes.emplace(key, index);
+      document["components"].push_back({
+          {"device_id", identity.device_id}, {"component_id", identity.component_id},
+          {"instances", Json::array()}, {"fields", Json::object()}});
+      found = component_indexes.find(key);
+    }
+    instance_components[identity.instance_id] = key;
+    document["components"][found->second]["instances"].push_back({
+      {"instance_id", identity.instance_id},
+      {"status", uran_plugin_api::to_string(info.state)},
+      {"health", health_name(info.health.level)},
+      {"health_message", info.health.message},
+      {"error", info.error},
+      {"error_count", info.health.error_count},
+      {"capabilities", info.capabilities.features}});
+  }
+
+  if (devices.size() == 1) {document["device_id"] = *devices.begin();}
+  for (const auto & item : session.state->snapshot()) {
+    const auto parsed = Json::parse(item.second.value_json, nullptr, false);
+    const auto value = parsed.is_discarded() ? Json(item.second.value_json) : parsed;
+    document["fields"][item.first] = value;
+    const auto owner = instance_components.find(item.second.source);
+    if (owner == instance_components.end()) {
+      document["unscoped_fields"][item.first] = value;
+      continue;
+    }
+    const auto component = component_indexes.find(owner->second);
+    if (component != component_indexes.end()) {
+      document["components"][component->second]["fields"][item.first] = value;
+    }
+  }
+  return document;
+}
+
+class SessionRuntimeSnapshotAccess final : public uran_plugin_api::RuntimeSnapshotAccess
+{
+public:
+  explicit SessionRuntimeSnapshotAccess(std::weak_ptr<Session> session)
+  : session_(std::move(session)) {}
+
+  std::string snapshot_json() const override
+  {
+    const auto session = session_.lock();
+    return session ? build_state_snapshot_document(*session).dump() : "{}";
+  }
+
+private:
+  std::weak_ptr<Session> session_;
+};
 }
 
 struct UranRuntime::Impl
@@ -269,7 +360,8 @@ Status UranRuntime::start(const YAML::Node & configuration)
     candidate->context = std::make_unique<PluginContext>(
       impl_->platform, candidate->state, candidate->routes,
       PluginIdentity{"uran_runtime", "runtime", "runtime"}, "runtime", messages,
-      candidate->capabilities, local_messages, candidate->state);
+      candidate->capabilities, local_messages, candidate->state,
+      std::make_shared<SessionRuntimeSnapshotAccess>(candidate));
     candidate->started = impl_->platform->steady_now();
     candidate->router->set_unhandled_handler(impl_->unhandled);
     const std::weak_ptr<PlatformServices> weak_platform = impl_->platform;
@@ -428,6 +520,14 @@ std::string UranRuntime::state_snapshot() const
     return impl_->session ? impl_->session->state->snapshot_json() : std::string("{}");
   });
 }
+
+std::string UranRuntime::state_snapshot_document() const
+{
+  return impl_->call([this] {
+    return impl_->session ? build_state_snapshot_document(*impl_->session) : Json::object();
+  }).dump();
+}
+
 std::string UranRuntime::diagnostics() const
 {
   return impl_->call([this] {

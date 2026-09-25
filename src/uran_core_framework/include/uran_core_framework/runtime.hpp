@@ -40,6 +40,8 @@ public:
   Status write_state(const std::string & field, const std::string & value_json,
     const std::string & source, bool persistent = false);
   std::string state_snapshot() const;
+  /** Return state fields together with the loaded component inventory. */
+  std::string state_snapshot_document() const;
   std::string diagnostics() const;
   std::vector<CapabilityProvider> providers(const std::string & capability,
     const std::string & device = {}, const std::string & component = {}) const;
