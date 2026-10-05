@@ -183,7 +183,6 @@ TEST_F(RuntimeTest, StateSnapshotDocumentIncludesEveryComponentAndInstance)
   ASSERT_TRUE(runtime.load(specification("arm_left", "robot_a", 90, "arm")).ok);
   ASSERT_TRUE(runtime.load(specification("arm_right", "robot_a", 80, "arm")).ok);
   auto camera = specification("camera", "robot_a", 70, "camera");
-  camera["config"]["no_state"] = true;
   camera["config"]["service"] = true;
   ASSERT_TRUE(runtime.load(camera).ok);
 
@@ -208,6 +207,7 @@ TEST_F(RuntimeTest, StateSnapshotDocumentIncludesEveryComponentAndInstance)
   EXPECT_TRUE(components.at("arm").at("fields").contains("plugin.arm_left.counter"));
   EXPECT_TRUE(components.at("arm").at("fields").contains("plugin.arm_right.counter"));
   EXPECT_FALSE(components.count("camera"));
+  EXPECT_TRUE(document.at("unscoped_fields").contains("plugin.camera.counter"));
 }
 
 TEST_F(RuntimeTest, FailedLoadReclaimsStateCapabilitiesAndRoutes)
