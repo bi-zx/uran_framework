@@ -29,6 +29,7 @@ struct Probe
   std::shared_ptr<CapabilityAccess> capabilities;
   std::function<void()> on_handle;
   bool fail_activate{false}, fail_cleanup{false}, fail_bind{false};
+  bool service{false};
 };
 class Extension : public MessagePlugin
 {
@@ -46,6 +47,7 @@ public:
     probe_->capabilities = context.capabilities();
     probe_->fail_activate = config["fail_activate"] && config["fail_activate"].as<bool>();
     probe_->fail_bind = config["fail_bind"] && config["fail_bind"].as<bool>();
+    probe_->service = config["service"] && config["service"].as<bool>();
     const bool no_state = config["no_state"] && config["no_state"].as<bool>();
     if (no_state) {
       return Status::success();
@@ -68,7 +70,11 @@ public:
     return probe_->fail_cleanup ? Status::failure("cleanup failed") : Status::success();
   }
   PluginHealth health() const override {return {};}
-  PluginCapabilities capabilities() const override {return {{"framework.echo"}, {"scheduler.serial"}, {}};}
+  PluginCapabilities capabilities() const override
+  {
+    return {probe_->service ? std::vector<std::string>{"framework.echo"} :
+      std::vector<std::string>{"framework.echo", "motion.test"}, {"scheduler.serial"}, {}};
+  }
   std::vector<std::string> message_types() const override
   {return probe_->fail_bind ? std::vector<std::string>{"echo", "echo"} : std::vector<std::string>{"echo"};}
   Status handle(const DownlinkEnvelope & message) override
@@ -178,6 +184,7 @@ TEST_F(RuntimeTest, StateSnapshotDocumentIncludesEveryComponentAndInstance)
   ASSERT_TRUE(runtime.load(specification("arm_right", "robot_a", 80, "arm")).ok);
   auto camera = specification("camera", "robot_a", 70, "camera");
   camera["config"]["no_state"] = true;
+  camera["config"]["service"] = true;
   ASSERT_TRUE(runtime.load(camera).ok);
 
   const auto document = Json::parse(runtime.state_snapshot_document());
@@ -189,10 +196,9 @@ TEST_F(RuntimeTest, StateSnapshotDocumentIncludesEveryComponentAndInstance)
   for (const auto & component : document.at("components")) {
     components.emplace(component.at("component_id").get<std::string>(), component);
   }
-  ASSERT_EQ(components.size(), 3U);
+  ASSERT_EQ(components.size(), 2U);
   ASSERT_TRUE(components.count("base"));
   ASSERT_TRUE(components.count("arm"));
-  ASSERT_TRUE(components.count("camera"));
   ASSERT_EQ(components.at("base").at("instances").size(), 1U);
   ASSERT_EQ(components.at("arm").at("instances").size(), 2U);
   EXPECT_EQ(components.at("base").at("instances")[0].at("instance_id"), "base");
@@ -201,7 +207,7 @@ TEST_F(RuntimeTest, StateSnapshotDocumentIncludesEveryComponentAndInstance)
   EXPECT_TRUE(components.at("base").at("fields").contains("plugin.base.counter"));
   EXPECT_TRUE(components.at("arm").at("fields").contains("plugin.arm_left.counter"));
   EXPECT_TRUE(components.at("arm").at("fields").contains("plugin.arm_right.counter"));
-  EXPECT_TRUE(components.at("camera").at("fields").empty());
+  EXPECT_FALSE(components.count("camera"));
 }
 
 TEST_F(RuntimeTest, FailedLoadReclaimsStateCapabilitiesAndRoutes)

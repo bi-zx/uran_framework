@@ -100,6 +100,18 @@ private:
   Dispatch dispatch_;
 };
 
+// component_id is the stable target identifier for motion parts.  Protocol
+// and service workers still carry the legacy identity field for compatibility,
+// but their state belongs in the flat/unscoped portion of a snapshot and must
+// not be advertised as a controllable motion component.
+bool is_motion_component(const uran_plugin_api::PluginRuntimeInfo & info)
+{
+  for (const auto & capability : info.capabilities.features) {
+    if (capability.compare(0, 7, "motion.") == 0) {return true;}
+  }
+  return false;
+}
+
 struct Session
 {
   std::shared_ptr<StateStore> state{std::make_shared<StateStore>()};
@@ -207,6 +219,7 @@ Json build_state_snapshot_document(const Session & session)
 
   for (const auto & info : infos) {
     const auto & identity = info.identity;
+    if (!is_motion_component(info)) {continue;}
     if (identity.device_id.empty() || identity.component_id.empty() || identity.instance_id.empty()) {
       continue;
     }
