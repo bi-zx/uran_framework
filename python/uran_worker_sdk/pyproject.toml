@@ -7,6 +7,7 @@ name = "uran-worker-sdk"
 version = "1.0.0"
 description = "Reference Python SDK for URAN JSONL process workers"
 requires-python = ">=3.6"
+dependencies = ["dataclasses>=0.8,<0.9; python_version < '3.7'"]
 
 [tool.setuptools.packages.find]
 where = ["."]

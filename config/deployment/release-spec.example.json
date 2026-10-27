@@ -1,0 +1,34 @@
+{
+  "release_id": "example-1.0.0",
+  "profile_id": "example",
+  "profile_version": "1.0.0",
+  "api_version": "2.1",
+  "state_schema": "1",
+  "platform": {
+    "os": "Linux",
+    "arch": "REPLACE_WITH_TARGET_ARCH",
+    "distribution": "REPLACE_WITH_TARGET_DISTRIBUTION",
+    "os_version": "REPLACE_WITH_TARGET_OS_VERSION",
+    "python": "REPLACE_WITH_TARGET_PYTHON_MAJOR_MINOR",
+    "libc": [
+      "REPLACE_WITH_TARGET_LIBC",
+      "REPLACE_WITH_TARGET_LIBC_VERSION"
+    ]
+  },
+  "host": "bin/uran_runtime",
+  "runtime_config": "config/runtime.json",
+  "packages": [
+    {
+      "package": "uran-framework",
+      "version": "2.1.0",
+      "origin": "https://artifacts.example.com/framework-2.1.0-REPLACE_WITH_TARGET_ARCH.tar.gz",
+      "sha256": "REPLACE_WITH_ACTUAL_PACKAGE_SHA256"
+    }
+  ],
+  "services": [],
+  "checks": [],
+  "migration": null,
+  "native_abi": 3,
+  "preflight": [],
+  "post_activate": []
+}

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uran-deploy"
+version = "1.0.0"
+description = "URAN authenticated bootstrap and transactional device deployment"
+requires-python = ">=3.6"
+dependencies = []
+
+[project.optional-dependencies]
+worker = ["uran-worker-sdk>=1,<2"]
+
+[project.scripts]
+uran-deploy = "uran_deploy.cli:main"
+uran-management-worker = "uran_deploy.worker:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["uran_deploy*"]

@@ -23,8 +23,12 @@ install(DIRECTORY schemas/ DESTINATION share/uran_framework/schemas)
 install(DIRECTORY python/uran_worker_sdk/ DESTINATION share/uran_framework/python/uran_worker_sdk
   PATTERN "build" EXCLUDE PATTERN "*.egg-info" EXCLUDE
   PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
+install(DIRECTORY python/uran_deploy/ DESTINATION share/uran_framework/python/uran_deploy
+  PATTERN "build" EXCLUDE PATTERN "*.egg-info" EXCLUDE
+  PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
 if(URAN_BUILD_NATIVE)
   install(PROGRAMS scripts/uran_plugin.py DESTINATION bin RENAME uran-plugin)
+  install(PROGRAMS scripts/uran_deploy.py DESTINATION bin RENAME uran-deploy)
 endif()
 if(BUILD_TESTING)
   add_subdirectory(tests)

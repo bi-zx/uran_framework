@@ -4,6 +4,8 @@
 
 当前提供插件生命周期和多实例装配、设备/组件身份、能力发现、通用消息路由、多协议选择、状态管理和持久化、运行时管理，以及插件包下载、源码编译、安装与应用。仓库中的回环协议和 `example.echo` 仅验证框架机制，没有接入运控、图传、导航、按键映射、任务规划、模型或 Agent 业务。
 
+受控设备部署通过 `uran-deploy` 提供：统一签名 bootstrap、设备注册客户端、agent/user/publisher 分离授权、HTTPS 制品获取、整套不可变发行物切换、状态快照、取消、失败补偿与监督进程重启恢复。Core 自升级由独立监督进程接管；常规部署不开放 SSH。安装和云端接入见[受控部署与 Bootstrap](docs/受控部署与Bootstrap.md)。
+
 ```mermaid
 flowchart TB
   N[Linux 原生宿主] --> R[UranRuntime]

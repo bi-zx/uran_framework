@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "device_id": "robot_001",
+  "trust": {
+    "agent-2026": {"role": "agent", "subject": "deployment_agent", "public_key": "keys/agent.pub.pem"},
+    "user-2026": {"role": "user", "subject": "device_owner", "public_key": "keys/user.pub.pem"},
+    "publisher-2026": {"role": "publisher", "subject": "uran_release", "public_key": "keys/publisher.pub.pem"}
+  },
+  "policy": {
+    "artifact_origins": ["https://artifacts.example.com"],
+    "max_task_ttl_s": 300,
+    "max_grant_ttl_s": 900,
+    "max_archive_bytes": 1073741824,
+    "max_unpacked_bytes": 4294967296,
+    "reserve_bytes": 268435456,
+    "transfer_timeout_s": 600,
+    "auto_deploy": []
+  },
+  "cloud": {
+    "transport_enabled": true,
+    "tenant_id": "default",
+    "auth": {"username": "robot_001", "token": ""},
+    "mqtt": {
+      "broker_host": "mqtt.example.com",
+      "broker_port": 8883,
+      "topic_prefix": "/oivs/{tenant_id}/{device_id}",
+      "tls": {"enabled": true}
+    },
+    "registration": {"require_response": false, "legacy_online_on_timeout": true},
+    "heartbeat_interval_s": 30,
+    "report_on_change": true
+  },
+  "maintenance": {"enabled": false, "max_session_s": 600, "services": {}}
+}
