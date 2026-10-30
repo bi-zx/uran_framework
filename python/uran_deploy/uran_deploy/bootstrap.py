@@ -142,7 +142,7 @@ def install(bundle, config_path, root, prefix, bootstrap_key, python=sys.executa
     if manifest["platform"].get("python") and target_python != manifest["platform"]["python"]:
         raise ValueError("bootstrap Python version does not match the selected service interpreter")
     subprocess.run([str(bundle / "sdk/bin/uran_runtime"), "--help"], check=True, stdout=subprocess.PIPE)
-    subprocess.run([python, "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
+    subprocess.run([python, "-B", "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
                     "import uran_worker_sdk, uran_mqtt_plugin.worker, uran_deploy.worker, paho.mqtt.client",
                     str(bundle / "python")], check=True)
     seed_envelope = read_json(bundle / "seed.tar.gz.release.json")
@@ -157,7 +157,8 @@ def install(bundle, config_path, root, prefix, bootstrap_key, python=sys.executa
     root.mkdir(parents=True, exist_ok=True)
     root.chmod(0o700)
     prefix.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(str(bundle), str(prefix))
+    # The prefix must equal the verified inventory; bytecode is never part of it.
+    shutil.copytree(str(bundle), str(prefix), ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     freeze(prefix)
     for name in ("releases", "receipts", "run", "data/state", "data/shared", "logs"):
         (root / name).mkdir(parents=True, exist_ok=True)
