@@ -104,7 +104,13 @@ def setup_bootstrap(config, keys, https, tmp_path, sdk, python_site):
     config_path = tmp_path / "device-config.json"
     atomic_json(config_path, config)
     prefix, root = Path(config["bootstrap_prefix"]), Path(config["root"])
-    installed_config = Path(install(bundle, config_path, root, prefix, keys["publisher"][1]))
+    saved = os.environ.pop("PYTHONDONTWRITEBYTECODE", None)  # like the documented plain python3 run
+    try:
+        installed_config = Path(install(bundle, config_path, root, prefix, keys["publisher"][1]))
+    finally:
+        if saved is not None:
+            os.environ["PYTHONDONTWRITEBYTECODE"] = saved
+    assert not list(prefix.rglob("__pycache__")), "installed bootstrap must equal its verified inventory"
     return prefix, root, installed_config
 
 
